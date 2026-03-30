@@ -128,22 +128,22 @@ input {
   width: min(92vw, 680px);
   min-height: min(80vh, 640px);
   border-radius: 34px;
-  padding: 18px;
+  padding: 0;
   cursor: pointer;
 }
 
 .content-image {
-  background: rgba(123, 93, 56, 0.12);
+  background: transparent;
 }
 
 .image-frame {
   width: 100%;
   min-height: min(70vh, 600px);
-  border-radius: 26px;
-  padding: clamp(10px, 1.8vw, 14px);
+  border-radius: 0;
+  padding: 0;
   position: relative;
   border: 0;
-  background: rgba(123, 93, 56, 0.14);
+  background: transparent;
   box-shadow: none;
 }
 
@@ -152,8 +152,8 @@ input {
   height: min(62vh, 540px);
   display: block;
   object-fit: contain;
-  border-radius: 20px;
-  background: rgba(255, 251, 244, 0.45);
+  border-radius: 0;
+  background: transparent;
 }
 
 .content-card.is-uploading {
