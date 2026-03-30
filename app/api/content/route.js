@@ -4,7 +4,11 @@ import {
   readStoredContent,
   writeStoredContent,
 } from "../../../lib/content-store";
-import { resolveContentForClient } from "../../../lib/r2";
+import {
+  createImageKey,
+  resolveContentForClient,
+  uploadR2Object,
+} from "../../../lib/r2";
 
 function getBlobToken() {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
@@ -85,6 +89,32 @@ export async function PUT(request) {
         { error: "El body JSON no tiene un tipo soportado." },
         { status: 400 },
       );
+    }
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await request.formData();
+      const file = formData.get("file");
+
+      if (!(file instanceof File) || !file.type.startsWith("image/")) {
+        return json(
+          { error: "Debe enviarse una imagen valida." },
+          { status: 400 },
+        );
+      }
+
+      const key = createImageKey(file.type);
+      const nextContent = {
+        type: "image",
+        value: key,
+        storage: "r2",
+        updatedAt: new Date().toISOString(),
+      };
+
+      await uploadR2Object(key, Buffer.from(await file.arrayBuffer()), file.type);
+      await writeStoredContent(nextContent);
+      await deleteImageIfNeeded(previousContent, nextContent);
+
+      return json({ content: await resolveContentForClient(nextContent) });
     }
 
     return json(

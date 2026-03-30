@@ -237,37 +237,12 @@ export default function HomeClient({ initialContent }) {
 
     try {
       const uploadFile = await prepareUploadFile(file);
-      const prepareResponse = await fetch("/api/content/upload-url", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ contentType: uploadFile.type }),
-      });
-
-      if (!prepareResponse.ok) {
-        throw new Error("No se pudo preparar la subida.");
-      }
-
-      const { key, uploadUrl } = await prepareResponse.json();
-      const uploadResponse = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": uploadFile.type,
-        },
-        body: uploadFile,
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error("No se pudo subir a R2.");
-      }
+      const formData = new FormData();
+      formData.append("file", uploadFile);
 
       const response = await fetch("/api/content", {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ type: "image", key }),
+        body: formData,
       });
 
       if (!response.ok) {
