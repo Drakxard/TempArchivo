@@ -31,6 +31,38 @@ export default function HomeClient({ initialContent }) {
     setPendingImageUrl(null);
   }
 
+  async function toClipboardPng(blob) {
+    if (blob.type === "image/png") {
+      return blob;
+    }
+
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      bitmap.close?.();
+      throw new Error("No canvas context.");
+    }
+
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((pngBlob) => {
+        if (pngBlob) {
+          resolve(pngBlob);
+          return;
+        }
+
+        reject(new Error("No se pudo convertir la imagen."));
+      }, "image/png");
+    });
+  }
+
   const handlePaste = useEffectEvent(async (event) => {
     const clipboard = event.clipboardData;
     if (!clipboard) {
@@ -198,9 +230,11 @@ export default function HomeClient({ initialContent }) {
           throw new Error("Clipboard image write not supported.");
         }
 
+        const clipboardBlob = await toClipboardPng(blob);
+
         await navigator.clipboard.write([
           new window.ClipboardItem({
-            [blob.type || "image/png"]: blob,
+            "image/png": clipboardBlob,
           }),
         ]);
         setStatus({ kind: "success", message: "Imagen copiada." });
