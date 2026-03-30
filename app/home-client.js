@@ -275,7 +275,7 @@ export default function HomeClient({ initialContent }) {
         return;
       }
 
-      const response = await fetch(content.value, { cache: "no-store" });
+      const response = await fetch("/api/content/image", { cache: "no-store" });
       if (!response.ok) {
         throw new Error("No se pudo leer la imagen.");
       }
