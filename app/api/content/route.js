@@ -1,5 +1,6 @@
 import {
   deleteImageIfNeeded,
+  readResolvedContent,
   readStoredContent,
   writeStoredContent,
 } from "../../../lib/content-store";
@@ -26,7 +27,7 @@ function json(body, init) {
 
 export async function GET() {
   try {
-    const content = await readStoredContent();
+    const content = await readResolvedContent();
     return json({ content });
   } catch (error) {
     return json(
@@ -43,57 +44,46 @@ export async function PUT(request) {
 
     if (contentType.includes("application/json")) {
       const body = await request.json();
-      const value = typeof body?.value === "string" ? body.value.trim() : "";
+      if (body?.type === "text") {
+        const value = typeof body?.value === "string" ? body.value.trim() : "";
 
-      if (body?.type !== "text" || !value) {
-        return json(
-          { error: "El body JSON debe ser texto no vacio." },
-          { status: 400 },
-        );
+        if (!value) {
+          return json(
+            { error: "El body JSON debe ser texto no vacio." },
+            { status: 400 },
+          );
+        }
+
+        const nextContent = {
+          type: "text",
+          value,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await writeStoredContent(nextContent);
+        await deleteImageIfNeeded(previousContent, nextContent);
+
+        return json({ content: nextContent });
       }
 
-      const nextContent = {
-        type: "text",
-        value,
-        updatedAt: new Date().toISOString(),
-      };
+      if (body?.type === "image" && typeof body?.key === "string" && body.key) {
+        const nextContent = {
+          type: "image",
+          value: body.key,
+          storage: "r2",
+          updatedAt: new Date().toISOString(),
+        };
 
-      await writeStoredContent(nextContent);
-      await deleteImageIfNeeded(previousContent, nextContent);
+        await writeStoredContent(nextContent);
+        await deleteImageIfNeeded(previousContent, nextContent);
 
-      return json({ content: nextContent });
-    }
-
-    if (contentType.includes("multipart/form-data")) {
-      const formData = await request.formData();
-      const file = formData.get("file");
-
-      if (!(file instanceof File) || !file.type.startsWith("image/")) {
-        return json(
-          { error: "Debe enviarse una imagen valida." },
-          { status: 400 },
-        );
+        return json({ content: await readResolvedContent() });
       }
 
-      const extension = file.type.split("/")[1] || "png";
-      const safeExtension = extension.replace(/[^a-z0-9]/gi, "").toLowerCase();
-      const pathname = `clipboard/images/current-${Date.now()}.${safeExtension || "png"}`;
-      const uploaded = await put(pathname, file, {
-        access: "public",
-        addRandomSuffix: true,
-        token: getBlobToken(),
-      });
-
-      const nextContent = {
-        type: "image",
-        value: uploaded.url,
-        updatedAt: new Date().toISOString(),
-      };
-
-      await writeStoredContent(nextContent);
-      await deleteImageIfNeeded(previousContent, nextContent);
-
-      return json({ content: nextContent });
+      return json(
+        { error: "El body JSON no tiene un tipo soportado." },
+        { status: 400 },
+      );
     }
 
     return json(

@@ -3,6 +3,8 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 const EMPTY_STATUS = { kind: "idle", message: "" };
+const MAX_UPLOAD_EDGE = 2000;
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 export default function HomeClient({ initialContent }) {
   const fileInputRef = useRef(null);
@@ -36,9 +38,15 @@ export default function HomeClient({ initialContent }) {
       return blob;
     }
 
-    const bitmap = await createImageBitmap(blob);
-    const canvas = document.createElement("canvas");
+    let bitmap;
 
+    try {
+      bitmap = await createImageBitmap(blob);
+    } catch {
+      throw new Error("No se pudo preparar la imagen.");
+    }
+
+    const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
 
@@ -60,6 +68,57 @@ export default function HomeClient({ initialContent }) {
 
         reject(new Error("No se pudo convertir la imagen."));
       }, "image/png");
+    });
+  }
+
+  async function prepareUploadFile(file) {
+    if (
+      file.size <= MAX_UPLOAD_BYTES &&
+      file.type !== "image/heic" &&
+      file.type !== "image/heif"
+    ) {
+      return file;
+    }
+
+    let bitmap;
+
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      return file;
+    }
+
+    const scale = Math.min(
+      1,
+      MAX_UPLOAD_EDGE / Math.max(bitmap.width, bitmap.height),
+    );
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) {
+      bitmap.close?.();
+      return file;
+    }
+
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+
+    const normalizedBlob = await new Promise((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", 0.82);
+    });
+
+    if (!normalizedBlob) {
+      return file;
+    }
+
+    return new File([normalizedBlob], "upload.jpg", {
+      type: "image/jpeg",
+      lastModified: Date.now(),
     });
   }
 
@@ -177,12 +236,38 @@ export default function HomeClient({ initialContent }) {
     setStatus({ kind: "idle", message: "" });
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
+      const uploadFile = await prepareUploadFile(file);
+      const prepareResponse = await fetch("/api/content/upload-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ contentType: uploadFile.type }),
+      });
+
+      if (!prepareResponse.ok) {
+        throw new Error("No se pudo preparar la subida.");
+      }
+
+      const { key, uploadUrl } = await prepareResponse.json();
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": uploadFile.type,
+        },
+        body: uploadFile,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error("No se pudo subir a R2.");
+      }
 
       const response = await fetch("/api/content", {
         method: "PUT",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ type: "image", key }),
       });
 
       if (!response.ok) {
@@ -230,6 +315,27 @@ export default function HomeClient({ initialContent }) {
           throw new Error("Clipboard image write not supported.");
         }
 
+        await navigator.clipboard.write([
+          new window.ClipboardItem({
+            [blob.type || "image/png"]: blob,
+          }),
+        ]);
+        setStatus({ kind: "success", message: "Imagen copiada." });
+        return;
+      } catch {
+        if (isTouchDevice) {
+          const objectUrl = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+
+          link.href = objectUrl;
+          link.download = "temp-archivo.png";
+          document.body.append(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+
         const clipboardBlob = await toClipboardPng(blob);
 
         await navigator.clipboard.write([
@@ -238,21 +344,6 @@ export default function HomeClient({ initialContent }) {
           }),
         ]);
         setStatus({ kind: "success", message: "Imagen copiada." });
-        return;
-      } catch {
-        if (!isTouchDevice) {
-          throw new Error("Clipboard image write not supported.");
-        }
-
-        const objectUrl = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-
-        link.href = objectUrl;
-        link.download = "temp-archivo.png";
-        document.body.append(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(objectUrl);
         return;
       }
     } catch {
