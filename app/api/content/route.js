@@ -4,6 +4,7 @@ import {
   readStoredContent,
   writeStoredContent,
 } from "../../../lib/content-store";
+import { resolveContentForClient } from "../../../lib/r2";
 
 function getBlobToken() {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
@@ -77,7 +78,7 @@ export async function PUT(request) {
         await writeStoredContent(nextContent);
         await deleteImageIfNeeded(previousContent, nextContent);
 
-        return json({ content: await readResolvedContent() });
+        return json({ content: await resolveContentForClient(nextContent) });
       }
 
       return json(
