@@ -26,7 +26,15 @@ async function readStoredContent() {
 
   try {
     const metadata = await head(STATE_PATH, { token });
-    const response = await fetch(metadata.url, { cache: "no-store" });
+    const stateUrl = new URL(metadata.url);
+    stateUrl.searchParams.set("v", metadata.uploadedAt);
+
+    const response = await fetch(stateUrl, {
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate",
+      },
+    });
 
     if (!response.ok) {
       throw new Error("Could not read stored content.");
@@ -55,7 +63,7 @@ async function writeStoredContent(content) {
     access: "public",
     addRandomSuffix: false,
     allowOverwrite: true,
-    cacheControlMaxAge: 60,
+    cacheControlMaxAge: 0,
     contentType: "application/json; charset=utf-8",
     token,
   });
@@ -77,7 +85,13 @@ async function deleteImageIfNeeded(previousContent, nextContent) {
 }
 
 function json(body, init) {
-  return Response.json(body, init);
+  const headers = new Headers(init?.headers);
+  headers.set("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate");
+
+  return Response.json(body, {
+    ...init,
+    headers,
+  });
 }
 
 export async function GET() {

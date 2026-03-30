@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 const EMPTY_STATUS = { kind: "idle", message: "" };
 
@@ -10,6 +10,7 @@ export default function HomePage() {
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [isBusy, setIsBusy] = useState(true);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [isReplacingImage, setIsReplacingImage] = useState(false);
 
   const hint = useMemo(() => {
     if (isTouchDevice) {
@@ -18,6 +19,36 @@ export default function HomePage() {
 
     return "Ctrl+V o click para imagen";
   }, [isTouchDevice]);
+
+  const handlePaste = useEffectEvent(async (event) => {
+    const clipboard = event.clipboardData;
+    if (!clipboard) {
+      return;
+    }
+
+    const imageItem = Array.from(clipboard.items).find((item) =>
+      item.type.startsWith("image/"),
+    );
+
+    if (imageItem) {
+      event.preventDefault();
+      const file = imageItem.getAsFile();
+
+      if (file) {
+        await uploadImage(file);
+      }
+
+      return;
+    }
+
+    const pastedText = clipboard.getData("text/plain");
+    if (!pastedText) {
+      return;
+    }
+
+    event.preventDefault();
+    await saveText(pastedText);
+  });
 
   useEffect(() => {
     loadContent();
@@ -29,42 +60,11 @@ export default function HomePage() {
 
     updateDeviceMode();
     coarsePointer.addEventListener("change", updateDeviceMode);
-
-    const onPaste = async (event) => {
-      const clipboard = event.clipboardData;
-      if (!clipboard) {
-        return;
-      }
-
-      const imageItem = Array.from(clipboard.items).find((item) =>
-        item.type.startsWith("image/"),
-      );
-
-      if (imageItem) {
-        event.preventDefault();
-        const file = imageItem.getAsFile();
-
-        if (file) {
-          await uploadImage(file);
-        }
-
-        return;
-      }
-
-      const pastedText = clipboard.getData("text/plain");
-      if (!pastedText) {
-        return;
-      }
-
-      event.preventDefault();
-      await saveText(pastedText);
-    };
-
-    window.addEventListener("paste", onPaste);
+    window.addEventListener("paste", handlePaste);
 
     return () => {
       coarsePointer.removeEventListener("change", updateDeviceMode);
-      window.removeEventListener("paste", onPaste);
+      window.removeEventListener("paste", handlePaste);
     };
   }, []);
 
@@ -126,6 +126,9 @@ export default function HomePage() {
 
   async function uploadImage(file) {
     setIsBusy(true);
+    setIsReplacingImage(true);
+    setContent(null);
+    setStatus({ kind: "idle", message: "" });
 
     try {
       const formData = new FormData();
@@ -144,8 +147,10 @@ export default function HomePage() {
       setContent(data.content);
       setStatus({ kind: "success", message: "Imagen cargada." });
     } catch (error) {
+      await loadContent();
       setStatus({ kind: "error", message: "No se pudo guardar la imagen." });
     } finally {
+      setIsReplacingImage(false);
       setIsBusy(false);
     }
   }
@@ -225,14 +230,14 @@ export default function HomePage() {
         {!content ? (
           <button
             type="button"
-            className="empty-state"
+            className={`empty-state ${isReplacingImage ? "is-loading" : ""}`}
             onClick={openFilePicker}
             disabled={isBusy}
             aria-label="Seleccionar imagen"
           >
-            <span className="plus-mark">+</span>
+            <span className="plus-mark">{isReplacingImage ? "" : "+"}</span>
             <span className="hint-text">
-              {isBusy ? "Cargando..." : hint}
+              {isReplacingImage ? "Subiendo imagen..." : isBusy ? "Cargando..." : hint}
             </span>
           </button>
         ) : (

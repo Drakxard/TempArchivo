@@ -82,6 +82,26 @@ input {
     background-color 160ms ease;
 }
 
+.empty-state.is-loading {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(91, 66, 34, 0.18);
+}
+
+.empty-state.is-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 250, 241, 0.52) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: translateX(-100%);
+  animation: loading-sheen 1.05s ease-in-out infinite;
+}
+
 .empty-state:hover,
 .content-card:hover,
 .ghost-action:hover {
@@ -108,6 +128,8 @@ input {
   font-size: 0.98rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  position: relative;
+  z-index: 1;
 }
 
 .content-card {
@@ -196,6 +218,16 @@ input {
 
 .status-text.is-idle {
   color: transparent;
+}
+
+@keyframes loading-sheen {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
 }
 
 @media (max-width: 720px) {
