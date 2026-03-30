@@ -9,6 +9,9 @@ const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 export default function HomeClient({ initialContent }) {
   const fileInputRef = useRef(null);
   const pendingImageUrlRef = useRef(null);
+  const cachedImageBlobRef = useRef(null);
+  const cachedImageVersionRef = useRef(null);
+  const imagePrefetchPromiseRef = useRef(null);
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [isBusy, setIsBusy] = useState(false);
@@ -31,6 +34,12 @@ export default function HomeClient({ initialContent }) {
     }
 
     setPendingImageUrl(null);
+  }
+
+  function clearCachedImageBlob() {
+    cachedImageBlobRef.current = null;
+    cachedImageVersionRef.current = null;
+    imagePrefetchPromiseRef.current = null;
   }
 
   async function toClipboardPng(blob) {
@@ -166,6 +175,99 @@ export default function HomeClient({ initialContent }) {
       coarsePointer.removeEventListener("change", updateDeviceMode);
       window.removeEventListener("paste", handlePaste);
       clearPendingImage();
+      clearCachedImageBlob();
+    };
+  }, []);
+
+  async function fetchCurrentImageBlob() {
+    const response = await fetch("/api/content/image", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error("No se pudo leer la imagen.");
+    }
+
+    return response.blob();
+  }
+
+  async function ensureCurrentImageBlob(forceRefresh = false) {
+    const imageVersion =
+      content?.type === "image" ? content.updatedAt || content.value : null;
+
+    if (!imageVersion) {
+      clearCachedImageBlob();
+      throw new Error("No hay imagen para copiar.");
+    }
+
+    if (
+      !forceRefresh &&
+      cachedImageBlobRef.current &&
+      cachedImageVersionRef.current === imageVersion
+    ) {
+      return cachedImageBlobRef.current;
+    }
+
+    if (
+      !forceRefresh &&
+      imagePrefetchPromiseRef.current &&
+      cachedImageVersionRef.current === imageVersion
+    ) {
+      return imagePrefetchPromiseRef.current;
+    }
+
+    cachedImageVersionRef.current = imageVersion;
+    imagePrefetchPromiseRef.current = fetchCurrentImageBlob()
+      .then((blob) => {
+        cachedImageBlobRef.current = blob;
+        return blob;
+      })
+      .catch((error) => {
+        if (cachedImageVersionRef.current === imageVersion) {
+          clearCachedImageBlob();
+        }
+
+        throw error;
+      })
+      .finally(() => {
+        imagePrefetchPromiseRef.current = null;
+      });
+
+    return imagePrefetchPromiseRef.current;
+  }
+
+  const prefetchImageForClipboard = useEffectEvent(async (forceRefresh = false) => {
+    if (content?.type !== "image" || pendingImageUrlRef.current) {
+      clearCachedImageBlob();
+      return;
+    }
+
+    try {
+      await ensureCurrentImageBlob(forceRefresh);
+    } catch {
+      // Warmup failure should not block the UI; copy flow handles errors explicitly.
+    }
+  });
+
+  useEffect(() => {
+    if (content?.type !== "image") {
+      clearCachedImageBlob();
+      return;
+    }
+
+    prefetchImageForClipboard();
+  }, [content]);
+
+  useEffect(() => {
+    const warmClipboardImage = () => {
+      if (document.visibilityState === "visible") {
+        void prefetchImageForClipboard(true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", warmClipboardImage);
+    window.addEventListener("focus", warmClipboardImage);
+
+    return () => {
+      document.removeEventListener("visibilitychange", warmClipboardImage);
+      window.removeEventListener("focus", warmClipboardImage);
     };
   }, []);
 
@@ -202,6 +304,7 @@ export default function HomeClient({ initialContent }) {
 
     setIsBusy(true);
     clearPendingImage();
+    clearCachedImageBlob();
 
     try {
       const response = await fetch("/api/content", {
@@ -231,6 +334,7 @@ export default function HomeClient({ initialContent }) {
 
     setIsBusy(true);
     setIsReplacingImage(true);
+    clearCachedImageBlob();
     pendingImageUrlRef.current = previewUrl;
     setPendingImageUrl(previewUrl);
     setStatus({ kind: "idle", message: "" });
@@ -275,12 +379,7 @@ export default function HomeClient({ initialContent }) {
         return;
       }
 
-      const response = await fetch("/api/content/image", { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error("No se pudo leer la imagen.");
-      }
-
-      const blob = await response.blob();
+      const blob = await ensureCurrentImageBlob();
 
       try {
         if (

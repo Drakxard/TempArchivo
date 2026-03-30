@@ -133,23 +133,18 @@ input {
 }
 
 .content-image {
-  background:
-    linear-gradient(180deg, rgba(255, 244, 225, 0.66), rgba(193, 160, 117, 0.2)),
-    var(--surface);
-  border: 1.5px solid rgba(91, 66, 34, 0.24);
+  background: rgba(123, 93, 56, 0.12);
 }
 
 .image-frame {
   width: 100%;
   min-height: min(70vh, 600px);
   border-radius: 26px;
-  padding: clamp(14px, 2vw, 18px);
+  padding: clamp(10px, 1.8vw, 14px);
   position: relative;
-  border: 8px solid var(--frame);
-  background:
-    linear-gradient(135deg, rgba(255, 249, 240, 0.4), rgba(202, 173, 133, 0.24)),
-    var(--surface-strong);
-  box-shadow: inset 0 0 0 2px rgba(91, 66, 34, 0.18);
+  border: 0;
+  background: rgba(123, 93, 56, 0.14);
+  box-shadow: none;
 }
 
 .image-content {
@@ -157,7 +152,7 @@ input {
   height: min(62vh, 540px);
   display: block;
   object-fit: contain;
-  border-radius: 18px;
+  border-radius: 20px;
   background: rgba(255, 251, 244, 0.45);
 }
 
@@ -263,7 +258,6 @@ input {
 
   .image-frame {
     min-height: 54vh;
-    border-width: 6px;
   }
 
   .image-content {
