@@ -226,7 +226,7 @@ export default function HomeClient({ initialContent }) {
         kind: "error",
         message:
           content.type === "image"
-            ? "Este navegador no pudo leer la imagen."
+            ? "No se pudo copiar la imagen."
             : "No se pudo copiar el texto.",
       });
     }

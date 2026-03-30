@@ -77,7 +77,6 @@ input {
   padding: 22px;
   cursor: pointer;
   transition:
-    transform 160ms ease,
     border-color 160ms ease,
     background-color 160ms ease;
 }
@@ -102,17 +101,10 @@ input {
   animation: loading-sheen 1.05s ease-in-out infinite;
 }
 
-.empty-state:hover,
-.content-card:hover,
-.ghost-action:hover {
-  transform: translateY(-2px);
-}
-
 .empty-state:disabled,
 .content-card:disabled,
 .ghost-action:disabled {
   cursor: progress;
-  transform: none;
 }
 
 .plus-mark {
@@ -171,10 +163,6 @@ input {
 
 .content-card.is-uploading {
   cursor: progress;
-}
-
-.content-card.is-uploading:hover {
-  transform: none;
 }
 
 .content-card.is-uploading .image-content {
