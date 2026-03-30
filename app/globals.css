@@ -1,0 +1,229 @@
+:root {
+  --bg: #d8c2a2;
+  --bg-soft: #e6d7bf;
+  --surface: rgba(248, 240, 225, 0.88);
+  --surface-strong: #f4ead7;
+  --frame: #b49366;
+  --frame-dark: #7b5d38;
+  --text: #3a2a1b;
+  --muted: #7b6751;
+  --success: #4f5f36;
+  --error: #8b4d33;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background:
+    radial-gradient(circle at top, rgba(255, 247, 235, 0.7), transparent 38%),
+    linear-gradient(180deg, #ead8b6 0%, var(--bg) 48%, #ccb089 100%);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font-family: "Georgia", "Times New Roman", serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.page-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.stage {
+  width: min(100%, 680px);
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+}
+
+.hidden-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.empty-state,
+.content-card,
+.ghost-action {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.empty-state {
+  width: min(92vw, 420px);
+  aspect-ratio: 1 / 1;
+  border: 1.5px solid rgba(91, 66, 34, 0.28);
+  border-radius: 34px;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.72), rgba(230, 215, 191, 0.78)),
+    var(--surface);
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 22px;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.empty-state:hover,
+.content-card:hover,
+.ghost-action:hover {
+  transform: translateY(-2px);
+}
+
+.empty-state:disabled,
+.content-card:disabled,
+.ghost-action:disabled {
+  cursor: progress;
+  transform: none;
+}
+
+.plus-mark {
+  font-size: clamp(6rem, 20vw, 9rem);
+  line-height: 1;
+  color: var(--frame-dark);
+  font-weight: 400;
+}
+
+.hint-text {
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.98rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.content-card {
+  width: min(92vw, 680px);
+  min-height: min(80vh, 640px);
+  border-radius: 34px;
+  padding: 18px;
+  cursor: pointer;
+}
+
+.content-image {
+  background:
+    linear-gradient(180deg, rgba(255, 244, 225, 0.66), rgba(193, 160, 117, 0.2)),
+    var(--surface);
+  border: 1.5px solid rgba(91, 66, 34, 0.24);
+}
+
+.image-frame {
+  width: 100%;
+  min-height: min(70vh, 600px);
+  border-radius: 26px;
+  padding: clamp(14px, 2vw, 18px);
+  border: 8px solid var(--frame);
+  background:
+    linear-gradient(135deg, rgba(255, 249, 240, 0.4), rgba(202, 173, 133, 0.24)),
+    var(--surface-strong);
+  box-shadow: inset 0 0 0 2px rgba(91, 66, 34, 0.18);
+}
+
+.image-content {
+  width: 100%;
+  height: min(62vh, 540px);
+  display: block;
+  object-fit: contain;
+  border-radius: 18px;
+  background: rgba(255, 251, 244, 0.45);
+}
+
+.content-text {
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(180deg, rgba(255, 248, 235, 0.8), rgba(224, 203, 170, 0.86)),
+    var(--surface);
+  border: 1.5px solid rgba(91, 66, 34, 0.24);
+}
+
+.text-content {
+  margin: 0;
+  max-width: 28ch;
+  font-size: clamp(1.65rem, 4vw, 3.4rem);
+  line-height: 1.16;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  letter-spacing: 0.01em;
+  text-align: center;
+}
+
+.actions-row {
+  min-height: 44px;
+}
+
+.ghost-action {
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(91, 66, 34, 0.22);
+  background: rgba(255, 247, 235, 0.35);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.status-text {
+  min-height: 24px;
+  margin: 0;
+  font-size: 0.96rem;
+  color: var(--muted);
+}
+
+.status-text.is-success {
+  color: var(--success);
+}
+
+.status-text.is-error {
+  color: var(--error);
+}
+
+.status-text.is-idle {
+  color: transparent;
+}
+
+@media (max-width: 720px) {
+  .page-shell {
+    padding: 18px;
+  }
+
+  .empty-state,
+  .content-card {
+    width: 100%;
+    border-radius: 28px;
+  }
+
+  .content-card {
+    min-height: 64vh;
+  }
+
+  .image-frame {
+    min-height: 54vh;
+    border-width: 6px;
+  }
+
+  .image-content {
+    height: 48vh;
+  }
+
+  .text-content {
+    font-size: clamp(1.4rem, 7vw, 2.6rem);
+    max-width: 18ch;
+  }
+}

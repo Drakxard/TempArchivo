@@ -1,0 +1,290 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+
+const EMPTY_STATUS = { kind: "idle", message: "" };
+
+export default function HomePage() {
+  const fileInputRef = useRef(null);
+  const [content, setContent] = useState(null);
+  const [status, setStatus] = useState(EMPTY_STATUS);
+  const [isBusy, setIsBusy] = useState(true);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+
+  const hint = useMemo(() => {
+    if (isTouchDevice) {
+      return "Tocar para elegir imagen";
+    }
+
+    return "Ctrl+V o click para imagen";
+  }, [isTouchDevice]);
+
+  useEffect(() => {
+    loadContent();
+
+    const coarsePointer = window.matchMedia("(pointer: coarse)");
+    const updateDeviceMode = () => {
+      setIsTouchDevice(coarsePointer.matches || navigator.maxTouchPoints > 0);
+    };
+
+    updateDeviceMode();
+    coarsePointer.addEventListener("change", updateDeviceMode);
+
+    const onPaste = async (event) => {
+      const clipboard = event.clipboardData;
+      if (!clipboard) {
+        return;
+      }
+
+      const imageItem = Array.from(clipboard.items).find((item) =>
+        item.type.startsWith("image/"),
+      );
+
+      if (imageItem) {
+        event.preventDefault();
+        const file = imageItem.getAsFile();
+
+        if (file) {
+          await uploadImage(file);
+        }
+
+        return;
+      }
+
+      const pastedText = clipboard.getData("text/plain");
+      if (!pastedText) {
+        return;
+      }
+
+      event.preventDefault();
+      await saveText(pastedText);
+    };
+
+    window.addEventListener("paste", onPaste);
+
+    return () => {
+      coarsePointer.removeEventListener("change", updateDeviceMode);
+      window.removeEventListener("paste", onPaste);
+    };
+  }, []);
+
+  async function loadContent() {
+    setIsBusy(true);
+
+    try {
+      const response = await fetch("/api/content", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("No se pudo cargar el contenido.");
+      }
+
+      const data = await response.json();
+      setContent(data.content);
+    } catch (error) {
+      setStatus({
+        kind: "error",
+        message: "No se pudo cargar el contenido actual.",
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function saveText(value) {
+    const text = value.trim();
+    if (!text) {
+      setStatus({
+        kind: "error",
+        message: "El texto pegado estaba vacio.",
+      });
+      return;
+    }
+
+    setIsBusy(true);
+
+    try {
+      const response = await fetch("/api/content", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ type: "text", value: text }),
+      });
+
+      if (!response.ok) {
+        throw new Error("No se pudo guardar el texto.");
+      }
+
+      const data = await response.json();
+      setContent(data.content);
+      setStatus({ kind: "success", message: "Texto cargado." });
+    } catch (error) {
+      setStatus({ kind: "error", message: "No se pudo guardar el texto." });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function uploadImage(file) {
+    setIsBusy(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/content", {
+        method: "PUT",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("No se pudo guardar la imagen.");
+      }
+
+      const data = await response.json();
+      setContent(data.content);
+      setStatus({ kind: "success", message: "Imagen cargada." });
+    } catch (error) {
+      setStatus({ kind: "error", message: "No se pudo guardar la imagen." });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function copyCurrentContent() {
+    if (!content) {
+      return;
+    }
+
+    try {
+      if (content.type === "text") {
+        await navigator.clipboard.writeText(content.value);
+      } else {
+        if (
+          !navigator.clipboard?.write ||
+          typeof window.ClipboardItem === "undefined"
+        ) {
+          throw new Error("Clipboard image write not supported.");
+        }
+
+        const response = await fetch(content.value, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("No se pudo leer la imagen.");
+        }
+
+        const blob = await response.blob();
+        await navigator.clipboard.write([
+          new window.ClipboardItem({
+            [blob.type || "image/png"]: blob,
+          }),
+        ]);
+      }
+
+      setStatus({ kind: "success", message: "Copiado." });
+    } catch (error) {
+      setStatus({
+        kind: "error",
+        message:
+          content.type === "image"
+            ? "Este navegador no pudo copiar la imagen."
+            : "No se pudo copiar el texto.",
+      });
+    }
+  }
+
+  function openFilePicker() {
+    if (isBusy) {
+      return;
+    }
+
+    fileInputRef.current?.click();
+  }
+
+  async function onFileChange(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    await uploadImage(file);
+  }
+
+  return (
+    <main className="page-shell">
+      <input
+        ref={fileInputRef}
+        className="hidden-input"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={onFileChange}
+      />
+
+      <section className="stage">
+        {!content ? (
+          <button
+            type="button"
+            className="empty-state"
+            onClick={openFilePicker}
+            disabled={isBusy}
+            aria-label="Seleccionar imagen"
+          >
+            <span className="plus-mark">+</span>
+            <span className="hint-text">
+              {isBusy ? "Cargando..." : hint}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`content-card content-${content.type}`}
+            onClick={copyCurrentContent}
+            disabled={isBusy}
+            aria-label={
+              content.type === "image"
+                ? "Copiar imagen al portapapeles"
+                : "Copiar texto al portapapeles"
+            }
+          >
+            {content.type === "image" ? (
+              <div className="image-frame">
+                <img
+                  src={content.value}
+                  alt="Contenido actual"
+                  className="image-content"
+                />
+              </div>
+            ) : (
+              <p className="text-content">{content.value}</p>
+            )}
+          </button>
+        )}
+
+        <div className="actions-row">
+          <button
+            type="button"
+            className="ghost-action"
+            onClick={openFilePicker}
+            disabled={isBusy}
+          >
+            {content ? "Reemplazar con imagen" : "Elegir imagen"}
+          </button>
+        </div>
+
+        <p
+          className={`status-text ${
+            status.kind === "error" ? "is-error" : "is-success"
+          } ${status.kind === "idle" ? "is-idle" : ""}`}
+          aria-live="polite"
+        >
+          {status.kind === "idle"
+            ? isBusy && !content
+              ? "Preparando..."
+              : " "
+            : status.message}
+        </p>
+      </section>
+    </main>
+  );
+}
