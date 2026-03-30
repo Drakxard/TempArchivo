@@ -152,6 +152,7 @@ input {
   min-height: min(70vh, 600px);
   border-radius: 26px;
   padding: clamp(14px, 2vw, 18px);
+  position: relative;
   border: 8px solid var(--frame);
   background:
     linear-gradient(135deg, rgba(255, 249, 240, 0.4), rgba(202, 173, 133, 0.24)),
@@ -166,6 +167,33 @@ input {
   object-fit: contain;
   border-radius: 18px;
   background: rgba(255, 251, 244, 0.45);
+}
+
+.content-card.is-uploading {
+  cursor: progress;
+}
+
+.content-card.is-uploading:hover {
+  transform: none;
+}
+
+.content-card.is-uploading .image-content {
+  filter: saturate(0.96) brightness(0.92);
+}
+
+.image-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(58, 42, 27, 0.76);
+  color: #f6ecdd;
+  font-size: 0.88rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .content-text {
