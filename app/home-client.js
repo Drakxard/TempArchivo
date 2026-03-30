@@ -206,6 +206,10 @@ export default function HomeClient({ initialContent }) {
         setStatus({ kind: "success", message: "Imagen copiada." });
         return;
       } catch {
+        if (!isTouchDevice) {
+          throw new Error("Clipboard image write not supported.");
+        }
+
         const objectUrl = URL.createObjectURL(blob);
         const link = document.createElement("a");
 
