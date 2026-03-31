@@ -5,6 +5,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 const EMPTY_STATUS = { kind: "idle", message: "" };
 const MAX_UPLOAD_EDGE = 2000;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const HOVER_COPY_COOLDOWN_MS = 2000;
 
 export default function HomeClient({ initialContent }) {
   const fileInputRef = useRef(null);
@@ -12,6 +13,7 @@ export default function HomeClient({ initialContent }) {
   const cachedImageBlobRef = useRef(null);
   const cachedImageVersionRef = useRef(null);
   const imagePrefetchPromiseRef = useRef(null);
+  const lastHoverCopyAtRef = useRef(0);
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [isBusy, setIsBusy] = useState(false);
@@ -431,6 +433,26 @@ export default function HomeClient({ initialContent }) {
     }
   }
 
+  async function handleImageHoverCopy() {
+    if (
+      isTouchDevice ||
+      isBusy ||
+      !content ||
+      content.type !== "image" ||
+      pendingImageUrlRef.current
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastHoverCopyAtRef.current < HOVER_COPY_COOLDOWN_MS) {
+      return;
+    }
+
+    lastHoverCopyAtRef.current = now;
+    await copyCurrentContent();
+  }
+
   function openFilePicker() {
     if (isBusy) {
       return;
@@ -491,6 +513,9 @@ export default function HomeClient({ initialContent }) {
                 type="button"
                 className="image-copy-button"
                 onClick={copyCurrentContent}
+                onPointerEnter={() => {
+                  void handleImageHoverCopy();
+                }}
                 disabled={isBusy}
                 aria-label="Copiar imagen al portapapeles"
               >
