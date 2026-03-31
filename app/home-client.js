@@ -481,21 +481,19 @@ export default function HomeClient({ initialContent }) {
             </span>
           </button>
         ) : (
-          <button
-            type="button"
-            className={`content-card content-${displayedContent.type} ${
-              displayedContent.isPending ? "is-uploading" : ""
-            }`}
-            onClick={copyCurrentContent}
-            disabled={isBusy}
-            aria-label={
-              displayedContent.type === "image"
-                ? "Copiar imagen al portapapeles"
-                : "Copiar texto al portapapeles"
-            }
-          >
-            {displayedContent.type === "image" ? (
-              <div className="image-frame">
+          displayedContent.type === "image" ? (
+            <div
+              className={`content-card content-image ${
+                displayedContent.isPending ? "is-uploading" : ""
+              }`}
+            >
+              <button
+                type="button"
+                className="image-copy-button"
+                onClick={copyCurrentContent}
+                disabled={isBusy}
+                aria-label="Copiar imagen al portapapeles"
+              >
                 <img
                   src={displayedContent.value}
                   alt="Contenido actual"
@@ -504,11 +502,21 @@ export default function HomeClient({ initialContent }) {
                 {displayedContent.isPending ? (
                   <span className="image-overlay">Subiendo imagen...</span>
                 ) : null}
-              </div>
-            ) : (
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className={`content-card content-text ${
+                displayedContent.isPending ? "is-uploading" : ""
+              }`}
+              onClick={copyCurrentContent}
+              disabled={isBusy}
+              aria-label="Copiar texto al portapapeles"
+            >
               <p className="text-content">{displayedContent.value}</p>
-            )}
-          </button>
+            </button>
+          )
         )}
 
         <div className="actions-row">

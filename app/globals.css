@@ -129,26 +129,28 @@ input {
   min-height: min(80vh, 640px);
   border-radius: 34px;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .content-image {
   background: transparent;
+  display: grid;
+  place-items: center;
 }
 
-.image-frame {
-  width: 100%;
-  min-height: min(70vh, 600px);
-  border-radius: 0;
-  padding: 0;
-  position: relative;
+.image-copy-button {
   border: 0;
+  padding: 0;
   background: transparent;
-  box-shadow: none;
+  position: relative;
+  cursor: pointer;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .image-content {
-  width: 100%;
+  width: auto;
+  max-width: min(92vw, 680px);
   height: min(62vh, 540px);
   display: block;
   object-fit: contain;
@@ -156,7 +158,8 @@ input {
   background: transparent;
 }
 
-.content-card.is-uploading {
+.content-text,
+.image-copy-button:disabled {
   cursor: progress;
 }
 
@@ -256,12 +259,9 @@ input {
     min-height: 64vh;
   }
 
-  .image-frame {
-    min-height: 54vh;
-  }
-
   .image-content {
     height: 48vh;
+    max-width: 100%;
   }
 
   .text-content {
