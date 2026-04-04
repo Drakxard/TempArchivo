@@ -9,6 +9,7 @@ const HOVER_COPY_COOLDOWN_MS = 2000;
 
 export default function HomeClient({ initialContent }) {
   const fileInputRef = useRef(null);
+  const mobilePasteRef = useRef(null);
   const pendingImageUrlRef = useRef(null);
   const cachedImageBlobRef = useRef(null);
   const cachedImageVersionRef = useRef(null);
@@ -20,6 +21,7 @@ export default function HomeClient({ initialContent }) {
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [isReplacingImage, setIsReplacingImage] = useState(false);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
+  const [mobilePasteValue, setMobilePasteValue] = useState("");
 
   const hint = useMemo(() => {
     if (isTouchDevice) {
@@ -472,6 +474,19 @@ export default function HomeClient({ initialContent }) {
     await uploadImage(file);
   }
 
+  async function onMobilePaste(event) {
+    const pastedText = event.clipboardData?.getData("text/plain") || "";
+    if (!pastedText) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setMobilePasteValue("");
+    mobilePasteRef.current?.blur();
+    await saveText(pastedText);
+  }
+
   const displayedContent =
     pendingImageUrl && isReplacingImage
       ? { type: "image", value: pendingImageUrl, isPending: true }
@@ -484,7 +499,6 @@ export default function HomeClient({ initialContent }) {
         className="hidden-input"
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={onFileChange}
       />
 
@@ -554,6 +568,26 @@ export default function HomeClient({ initialContent }) {
             {displayedContent ? "Reemplazar con imagen" : "Elegir imagen"}
           </button>
         </div>
+
+        {isTouchDevice ? (
+          <textarea
+            ref={mobilePasteRef}
+            className="mobile-paste-input"
+            value={mobilePasteValue}
+            onChange={(event) => {
+              setMobilePasteValue(event.target.value);
+            }}
+            onPaste={(event) => {
+              void onMobilePaste(event);
+            }}
+            disabled={isBusy}
+            placeholder="Pega texto aca para reemplazar el contenido"
+            rows={3}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        ) : null}
 
         <p
           className={`status-text ${

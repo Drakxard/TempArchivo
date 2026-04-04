@@ -33,6 +33,10 @@ input {
   font: inherit;
 }
 
+textarea {
+  font: inherit;
+}
+
 .page-shell {
   min-height: 100vh;
   display: grid;
@@ -206,6 +210,27 @@ input {
   min-height: 44px;
 }
 
+.mobile-paste-input {
+  width: min(92vw, 680px);
+  min-height: 92px;
+  resize: vertical;
+  padding: 14px 16px;
+  border-radius: 22px;
+  border: 1.5px solid rgba(91, 66, 34, 0.22);
+  background: rgba(255, 248, 235, 0.72);
+  color: var(--text);
+  outline: none;
+}
+
+.mobile-paste-input::placeholder {
+  color: var(--muted);
+}
+
+.mobile-paste-input:focus {
+  border-color: rgba(123, 93, 56, 0.72);
+  box-shadow: 0 0 0 3px rgba(180, 147, 102, 0.18);
+}
+
 .ghost-action {
   padding: 10px 16px;
   border-radius: 999px;
@@ -257,6 +282,10 @@ input {
 
   .content-card {
     min-height: 64vh;
+  }
+
+  .mobile-paste-input {
+    width: 100%;
   }
 
   .image-content {
