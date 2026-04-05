@@ -637,6 +637,19 @@ export default function HomeClient({ initialContent }) {
     setActiveFormula(formula);
   }
 
+  async function copyFormulaLatex() {
+    if (!activeFormula) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(activeFormula.latex);
+      setStatus({ kind: "success", message: "Formula copiada." });
+    } catch {
+      setStatus({ kind: "error", message: "No se pudo copiar la formula." });
+    }
+  }
+
   async function handleImageHoverCopy() {
     if (
       isTouchDevice ||
@@ -824,9 +837,6 @@ export default function HomeClient({ initialContent }) {
               <div className="text-card-header">
                 <span className="text-card-chip">Texto</span>
                 <div className="text-card-actions">
-                  <span className="text-card-hint">
-                    Arrastra los laterales para ajustar ancho. Toca una formula para verla grande.
-                  </span>
                   <button
                     type="button"
                     className="text-copy-button"
@@ -911,23 +921,38 @@ export default function HomeClient({ initialContent }) {
           >
             <div className="formula-modal-header">
               <p className="formula-modal-title">Formula ampliada</p>
-              <button
-                type="button"
-                className="formula-modal-close"
-                onClick={() => {
-                  setActiveFormula(null);
-                }}
-                aria-label="Cerrar formula"
-              >
-                Cerrar
-              </button>
+              <div className="formula-modal-actions">
+                <button
+                  type="button"
+                  className="formula-modal-icon-button"
+                  onClick={() => {
+                    void copyFormulaLatex();
+                  }}
+                  aria-label="Copiar formula"
+                  title="Copiar formula"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M9 9h9v11H9z" />
+                    <path d="M6 5h9v2H8v9H6z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="formula-modal-close"
+                  onClick={() => {
+                    setActiveFormula(null);
+                  }}
+                  aria-label="Cerrar formula"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
             <div className="formula-modal-body">
               <div
                 className="formula-modal-math"
                 dangerouslySetInnerHTML={{ __html: activeFormulaMarkup }}
               />
-              <pre className="formula-modal-source">{activeFormula.latex}</pre>
             </div>
           </div>
         </div>
