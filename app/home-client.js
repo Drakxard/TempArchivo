@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 
 const EMPTY_STATUS = { kind: "idle", message: "" };
 const MAX_UPLOAD_EDGE = 2000;
@@ -10,6 +14,7 @@ const HOVER_COPY_COOLDOWN_MS = 2000;
 export default function HomeClient({ initialContent }) {
   const fileInputRef = useRef(null);
   const mobilePasteRef = useRef(null);
+  const textDocumentRef = useRef(null);
   const pendingImageUrlRef = useRef(null);
   const cachedImageBlobRef = useRef(null);
   const cachedImageVersionRef = useRef(null);
@@ -435,6 +440,59 @@ export default function HomeClient({ initialContent }) {
     }
   }
 
+  async function copyCurrentText() {
+    if (!content || content.type !== "text") {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(content.value);
+      setStatus({ kind: "success", message: "Copiado." });
+    } catch {
+      setStatus({
+        kind: "error",
+        message: "No se pudo copiar el texto.",
+      });
+    }
+  }
+
+  function hasDocumentSelection() {
+    const selection = window.getSelection?.();
+    const root = textDocumentRef.current;
+
+    if (
+      !selection ||
+      selection.isCollapsed ||
+      !root ||
+      !selection.toString().trim()
+    ) {
+      return false;
+    }
+
+    return root.contains(selection.anchorNode) && root.contains(selection.focusNode);
+  }
+
+  async function handleTextCardClick() {
+    if (isBusy || hasDocumentSelection()) {
+      return;
+    }
+
+    await copyCurrentText();
+  }
+
+  async function handleTextCardKeyDown(event) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    if (hasDocumentSelection()) {
+      return;
+    }
+
+    event.preventDefault();
+    await copyCurrentText();
+  }
+
   async function handleImageHoverCopy() {
     if (
       isTouchDevice ||
@@ -544,17 +602,33 @@ export default function HomeClient({ initialContent }) {
               </button>
             </div>
           ) : (
-            <button
-              type="button"
+            <article
+              ref={textDocumentRef}
               className={`content-card content-text ${
                 displayedContent.isPending ? "is-uploading" : ""
               }`}
-              onClick={copyCurrentContent}
-              disabled={isBusy}
-              aria-label="Copiar texto al portapapeles"
+              onClick={() => {
+                void handleTextCardClick();
+              }}
+              onKeyDown={(event) => {
+                void handleTextCardKeyDown(event);
+              }}
+              tabIndex={0}
+              aria-label="Texto renderizado; click para copiar el contenido original"
             >
-              <p className="text-content">{displayedContent.value}</p>
-            </button>
+              <div className="text-card-header">
+                <span className="text-card-chip">Texto</span>
+                <span className="text-card-hint">Click para copiar el original</span>
+              </div>
+              <div className="text-document">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                >
+                  {displayedContent.value}
+                </ReactMarkdown>
+              </div>
+            </article>
           )
         )}
 
