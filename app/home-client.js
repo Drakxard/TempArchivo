@@ -11,9 +11,14 @@ const MAX_UPLOAD_EDGE = 2000;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const HOVER_COPY_COOLDOWN_MS = 2000;
 const TEXT_CARD_WIDTH_KEY = "temp-archivo-text-card-width";
+const FORMULA_SCALE_KEY = "temp-archivo-formula-scale";
 const DEFAULT_TEXT_CARD_WIDTH = 920;
 const MIN_TEXT_CARD_WIDTH = 720;
 const MAX_TEXT_CARD_WIDTH = 1240;
+const DEFAULT_FORMULA_SCALE = 1;
+const MIN_FORMULA_SCALE = 0.75;
+const MAX_FORMULA_SCALE = 2;
+const FORMULA_SCALE_STEP = 0.15;
 
 function getTextCardMaxWidth(viewportWidth) {
   if (!Number.isFinite(viewportWidth)) {
@@ -82,6 +87,7 @@ export default function HomeClient({ initialContent }) {
   const [mobilePasteValue, setMobilePasteValue] = useState("");
   const [textCardWidth, setTextCardWidth] = useState(DEFAULT_TEXT_CARD_WIDTH);
   const [activeFormula, setActiveFormula] = useState(null);
+  const [formulaScale, setFormulaScale] = useState(DEFAULT_FORMULA_SCALE);
 
   const hint = useMemo(() => {
     if (isTouchDevice) {
@@ -258,6 +264,21 @@ export default function HomeClient({ initialContent }) {
   useEffect(() => {
     window.localStorage.setItem(TEXT_CARD_WIDTH_KEY, String(textCardWidth));
   }, [textCardWidth]);
+
+  useEffect(() => {
+    const savedScale = window.localStorage.getItem(FORMULA_SCALE_KEY);
+    const parsedScale = Number(savedScale);
+
+    if (Number.isFinite(parsedScale)) {
+      setFormulaScale(
+        Math.min(MAX_FORMULA_SCALE, Math.max(MIN_FORMULA_SCALE, parsedScale)),
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(FORMULA_SCALE_KEY, String(formulaScale));
+  }, [formulaScale]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -650,6 +671,18 @@ export default function HomeClient({ initialContent }) {
     }
   }
 
+  function increaseFormulaScale() {
+    setFormulaScale((current) =>
+      Math.min(MAX_FORMULA_SCALE, Number((current + FORMULA_SCALE_STEP).toFixed(2))),
+    );
+  }
+
+  function decreaseFormulaScale() {
+    setFormulaScale((current) =>
+      Math.max(MIN_FORMULA_SCALE, Number((current - FORMULA_SCALE_STEP).toFixed(2))),
+    );
+  }
+
   async function handleImageHoverCopy() {
     if (
       isTouchDevice ||
@@ -924,6 +957,26 @@ export default function HomeClient({ initialContent }) {
               <div className="formula-modal-actions">
                 <button
                   type="button"
+                  className="formula-modal-scale-button"
+                  onClick={decreaseFormulaScale}
+                  disabled={formulaScale <= MIN_FORMULA_SCALE}
+                  aria-label="Achicar formula"
+                  title="Achicar formula"
+                >
+                  -
+                </button>
+                <button
+                  type="button"
+                  className="formula-modal-scale-button"
+                  onClick={increaseFormulaScale}
+                  disabled={formulaScale >= MAX_FORMULA_SCALE}
+                  aria-label="Agrandar formula"
+                  title="Agrandar formula"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
                   className="formula-modal-icon-button"
                   onClick={() => {
                     void copyFormulaLatex();
@@ -951,6 +1004,7 @@ export default function HomeClient({ initialContent }) {
             <div className="formula-modal-body">
               <div
                 className="formula-modal-math"
+                style={{ "--formula-scale": formulaScale }}
                 dangerouslySetInnerHTML={{ __html: activeFormulaMarkup }}
               />
             </div>
