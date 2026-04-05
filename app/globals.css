@@ -45,7 +45,7 @@ textarea {
 }
 
 .stage {
-  width: min(100%, 680px);
+  width: min(100%, 1280px);
   display: grid;
   justify-items: center;
   gap: 18px;
@@ -186,6 +186,7 @@ textarea {
 }
 
 .content-text {
+  position: relative;
   min-height: auto;
   display: grid;
   align-content: start;
@@ -208,6 +209,10 @@ textarea {
     0 0 0 3px rgba(180, 147, 102, 0.22),
     0 22px 50px rgba(104, 78, 42, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.content-text.is-resizing {
+  cursor: ew-resize;
 }
 
 .content-text,
@@ -245,6 +250,72 @@ textarea {
   letter-spacing: 0.02em;
 }
 
+.text-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+}
+
+.text-copy-button {
+  border: 1px solid rgba(91, 66, 34, 0.16);
+  background: rgba(255, 251, 244, 0.88);
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.text-copy-button:disabled {
+  cursor: progress;
+}
+
+.text-resize-handle {
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  width: 20px;
+  border-radius: 999px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.text-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 68px;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(123, 93, 56, 0.1),
+    rgba(123, 93, 56, 0.45),
+    rgba(123, 93, 56, 0.1)
+  );
+  transform: translate(-50%, -50%);
+  opacity: 0.55;
+  transition: opacity 160ms ease, background-color 160ms ease;
+}
+
+.content-text:hover .text-resize-handle::before,
+.content-text:focus-within .text-resize-handle::before,
+.content-text.is-resizing .text-resize-handle::before {
+  opacity: 0.9;
+}
+
+.text-resize-handle-left {
+  left: -14px;
+}
+
+.text-resize-handle-right {
+  right: -14px;
+}
+
 .text-document {
   padding: clamp(22px, 4vw, 34px);
   border-radius: 26px;
@@ -255,6 +326,39 @@ textarea {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
   color: #342516;
   overflow-wrap: break-word;
+}
+
+.math-expression {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.math-expression.is-inline {
+  display: inline-flex;
+  align-items: baseline;
+  border-radius: 10px;
+  margin: 0 0.08rem;
+}
+
+.math-expression.is-display {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: 0.35rem 0.4rem;
+  border-radius: 18px;
+}
+
+.math-expression:hover,
+.math-expression:focus-visible {
+  background: rgba(180, 147, 102, 0.1);
+  outline: none;
+}
+
+.math-expression-render {
+  max-width: 100%;
 }
 
 .text-document > :first-child {
@@ -446,6 +550,94 @@ textarea {
   color: transparent;
 }
 
+.formula-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(39, 28, 15, 0.48);
+  backdrop-filter: blur(8px);
+}
+
+.formula-modal {
+  width: min(100%, 980px);
+  max-height: min(88vh, 900px);
+  display: grid;
+  gap: 18px;
+  padding: clamp(18px, 3vw, 28px);
+  border-radius: 30px;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(247, 236, 219, 0.96)),
+    #fffaf2;
+  border: 1px solid rgba(91, 66, 34, 0.14);
+  box-shadow: 0 34px 80px rgba(50, 35, 18, 0.24);
+}
+
+.formula-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.formula-modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.formula-modal-close {
+  border: 1px solid rgba(91, 66, 34, 0.16);
+  background: rgba(255, 251, 244, 0.9);
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.formula-modal-body {
+  min-height: 0;
+  display: grid;
+  gap: 18px;
+}
+
+.formula-modal-math {
+  min-height: min(36vh, 360px);
+  max-height: 52vh;
+  overflow: auto;
+  padding: clamp(20px, 4vw, 34px);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(91, 66, 34, 0.1);
+}
+
+.formula-modal-math .katex-display {
+  margin: 0;
+}
+
+.formula-modal-math .katex {
+  font-size: clamp(1.35rem, 3vw, 2.2rem);
+}
+
+.formula-modal-source {
+  margin: 0;
+  overflow: auto;
+  padding: 1rem 1.1rem;
+  border-radius: 18px;
+  background: rgba(65, 47, 27, 0.92);
+  color: #f9f1e4;
+  font-family: "Consolas", "SFMono-Regular", monospace;
+  font-size: 0.96rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @keyframes loading-sheen {
   from {
     transform: translateX(-100%);
@@ -472,9 +664,14 @@ textarea {
   }
 
   .content-text {
+    width: 100% !important;
     min-height: auto;
     gap: 16px;
     padding: 18px;
+  }
+
+  .text-resize-handle {
+    display: none;
   }
 
   .mobile-paste-input {
@@ -490,11 +687,36 @@ textarea {
     align-items: flex-start;
   }
 
+  .text-card-actions {
+    justify-content: flex-start;
+  }
+
   .text-card-hint {
     font-size: 0.8rem;
   }
 
   .text-document {
     padding: 18px 16px 20px;
+  }
+
+  .formula-modal-backdrop {
+    padding: 14px;
+  }
+
+  .formula-modal {
+    max-height: 92vh;
+    padding: 18px 16px;
+    border-radius: 24px;
+  }
+
+  .formula-modal-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .formula-modal-math {
+    min-height: 28vh;
+    max-height: 44vh;
+    padding: 18px 14px;
   }
 }

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import katex from "katex";
 import ReactMarkdown from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
@@ -10,11 +10,63 @@ const EMPTY_STATUS = { kind: "idle", message: "" };
 const MAX_UPLOAD_EDGE = 2000;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const HOVER_COPY_COOLDOWN_MS = 2000;
+const TEXT_CARD_WIDTH_KEY = "temp-archivo-text-card-width";
+const DEFAULT_TEXT_CARD_WIDTH = 920;
+const MIN_TEXT_CARD_WIDTH = 720;
+const MAX_TEXT_CARD_WIDTH = 1240;
+
+function getTextCardMaxWidth(viewportWidth) {
+  if (!Number.isFinite(viewportWidth)) {
+    return DEFAULT_TEXT_CARD_WIDTH;
+  }
+
+  return Math.max(
+    MIN_TEXT_CARD_WIDTH,
+    Math.min(MAX_TEXT_CARD_WIDTH, viewportWidth - 96),
+  );
+}
+
+function clampTextCardWidth(value, viewportWidth) {
+  return Math.min(
+    getTextCardMaxWidth(viewportWidth),
+    Math.max(MIN_TEXT_CARD_WIDTH, value),
+  );
+}
+
+function renderMathMarkup(latex, displayMode) {
+  return katex.renderToString(latex, {
+    displayMode,
+    throwOnError: false,
+    strict: "ignore",
+  });
+}
+
+function MathExpression({ latex, displayMode, onOpen }) {
+  const html = renderMathMarkup(latex, displayMode);
+
+  return (
+    <button
+      type="button"
+      className={`math-expression ${displayMode ? "is-display" : "is-inline"}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen({ latex, displayMode });
+      }}
+      aria-label="Abrir formula en grande"
+    >
+      <span
+        className="math-expression-render"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </button>
+  );
+}
 
 export default function HomeClient({ initialContent }) {
   const fileInputRef = useRef(null);
   const mobilePasteRef = useRef(null);
   const textDocumentRef = useRef(null);
+  const resizeSessionRef = useRef(null);
   const pendingImageUrlRef = useRef(null);
   const cachedImageBlobRef = useRef(null);
   const cachedImageVersionRef = useRef(null);
@@ -25,8 +77,11 @@ export default function HomeClient({ initialContent }) {
   const [isBusy, setIsBusy] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [isReplacingImage, setIsReplacingImage] = useState(false);
+  const [isResizingTextCard, setIsResizingTextCard] = useState(false);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
   const [mobilePasteValue, setMobilePasteValue] = useState("");
+  const [textCardWidth, setTextCardWidth] = useState(DEFAULT_TEXT_CARD_WIDTH);
+  const [activeFormula, setActiveFormula] = useState(null);
 
   const hint = useMemo(() => {
     if (isTouchDevice) {
@@ -187,6 +242,56 @@ export default function HomeClient({ initialContent }) {
       clearCachedImageBlob();
     };
   }, []);
+
+  useEffect(() => {
+    const savedWidth = window.localStorage.getItem(TEXT_CARD_WIDTH_KEY);
+    const parsedWidth = Number(savedWidth);
+
+    if (Number.isFinite(parsedWidth) && parsedWidth > 0) {
+      setTextCardWidth(clampTextCardWidth(parsedWidth, window.innerWidth));
+      return;
+    }
+
+    setTextCardWidth(clampTextCardWidth(DEFAULT_TEXT_CARD_WIDTH, window.innerWidth));
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(TEXT_CARD_WIDTH_KEY, String(textCardWidth));
+  }, [textCardWidth]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setTextCardWidth((currentWidth) =>
+        clampTextCardWidth(currentWidth, window.innerWidth),
+      );
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeFormula) {
+      document.body.style.removeProperty("overflow");
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setActiveFormula(null);
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.removeProperty("overflow");
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [activeFormula]);
 
   async function fetchCurrentImageBlob() {
     const response = await fetch("/api/content/image", { cache: "no-store" });
@@ -456,41 +561,80 @@ export default function HomeClient({ initialContent }) {
     }
   }
 
-  function hasDocumentSelection() {
-    const selection = window.getSelection?.();
-    const root = textDocumentRef.current;
-
-    if (
-      !selection ||
-      selection.isCollapsed ||
-      !root ||
-      !selection.toString().trim()
-    ) {
-      return false;
-    }
-
-    return root.contains(selection.anchorNode) && root.contains(selection.focusNode);
+  function finishTextResize() {
+    resizeSessionRef.current = null;
+    setIsResizingTextCard(false);
+    document.body.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
   }
 
-  async function handleTextCardClick() {
-    if (isBusy || hasDocumentSelection()) {
+  const handleTextResizeMove = useEffectEvent((event) => {
+    const session = resizeSessionRef.current;
+
+    if (!session) {
       return;
     }
 
-    await copyCurrentText();
-  }
+    const nextWidth = clampTextCardWidth(
+      Math.round(Math.abs(event.clientX - session.centerX) * 2),
+      window.innerWidth,
+    );
 
-  async function handleTextCardKeyDown(event) {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
+    setTextCardWidth(nextWidth);
+  });
+
+  const handleTextResizeEnd = useEffectEvent(() => {
+    finishTextResize();
+  });
+
+  useEffect(() => {
+    if (!isResizingTextCard) {
+      return undefined;
     }
 
-    if (hasDocumentSelection()) {
+    const handlePointerMove = (event) => {
+      handleTextResizeMove(event);
+    };
+    const handlePointerUp = () => {
+      handleTextResizeEnd();
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [isResizingTextCard]);
+
+  function handleTextResizeStart(event) {
+    if (isBusy || isTouchDevice) {
       return;
     }
 
     event.preventDefault();
-    await copyCurrentText();
+    event.stopPropagation();
+
+    const root = textDocumentRef.current?.closest(".content-text");
+
+    if (!root) {
+      return;
+    }
+
+    const rect = root.getBoundingClientRect();
+    resizeSessionRef.current = {
+      centerX: rect.left + rect.width / 2,
+    };
+    setIsResizingTextCard(true);
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  function handleFormulaOpen(formula) {
+    setActiveFormula(formula);
   }
 
   async function handleImageHoverCopy() {
@@ -550,6 +694,62 @@ export default function HomeClient({ initialContent }) {
       ? { type: "image", value: pendingImageUrl, isPending: true }
       : content;
 
+  const textCardStyle = {
+    width: `min(100%, ${textCardWidth}px)`,
+  };
+
+  const markdownComponents = {
+    pre({ node, children, ...props }) {
+      const className = node?.children?.[0]?.properties?.className;
+      const isMathBlock =
+        Array.isArray(className) &&
+        className.some((value) => String(value).includes("math-display"));
+
+      if (isMathBlock) {
+        return <>{children}</>;
+      }
+
+      return <pre {...props}>{children}</pre>;
+    },
+    code({ className, children, ...props }) {
+      const classNames = Array.isArray(className)
+        ? className
+        : String(className || "")
+            .split(" ")
+            .filter(Boolean);
+      const isMathCode = classNames.some((value) =>
+        String(value).includes("language-math") ||
+        String(value).includes("math-inline") ||
+        String(value).includes("math-display"),
+      );
+
+      if (!isMathCode) {
+        return (
+          <code className={className} {...props}>
+            {children}
+          </code>
+        );
+      }
+
+      const latex = String(children).replace(/\n$/, "");
+      const displayMode = classNames.some((value) =>
+        String(value).includes("math-display"),
+      );
+
+      return (
+        <MathExpression
+          latex={latex}
+          displayMode={displayMode}
+          onOpen={handleFormulaOpen}
+        />
+      );
+    },
+  };
+
+  const activeFormulaMarkup = activeFormula
+    ? renderMathMarkup(activeFormula.latex, true)
+    : "";
+
   return (
     <main className="page-shell">
       <input
@@ -606,24 +806,43 @@ export default function HomeClient({ initialContent }) {
               ref={textDocumentRef}
               className={`content-card content-text ${
                 displayedContent.isPending ? "is-uploading" : ""
-              }`}
-              onClick={() => {
-                void handleTextCardClick();
-              }}
-              onKeyDown={(event) => {
-                void handleTextCardKeyDown(event);
-              }}
-              tabIndex={0}
-              aria-label="Texto renderizado; click para copiar el contenido original"
+              } ${isResizingTextCard ? "is-resizing" : ""}`}
+              style={textCardStyle}
+              data-text-card-root="true"
+              aria-label="Texto renderizado"
             >
+              <span
+                className="text-resize-handle text-resize-handle-left"
+                onPointerDown={handleTextResizeStart}
+                aria-hidden="true"
+              />
+              <span
+                className="text-resize-handle text-resize-handle-right"
+                onPointerDown={handleTextResizeStart}
+                aria-hidden="true"
+              />
               <div className="text-card-header">
                 <span className="text-card-chip">Texto</span>
-                <span className="text-card-hint">Click para copiar el original</span>
+                <div className="text-card-actions">
+                  <span className="text-card-hint">
+                    Arrastra los laterales para ajustar ancho. Toca una formula para verla grande.
+                  </span>
+                  <button
+                    type="button"
+                    className="text-copy-button"
+                    onClick={() => {
+                      void copyCurrentText();
+                    }}
+                    disabled={isBusy}
+                  >
+                    Copiar original
+                  </button>
+                </div>
               </div>
               <div className="text-document">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkMath]}
-                  rehypePlugins={[rehypeKatex]}
+                  components={markdownComponents}
                 >
                   {displayedContent.value}
                 </ReactMarkdown>
@@ -672,6 +891,47 @@ export default function HomeClient({ initialContent }) {
           {status.kind === "idle" ? " " : status.message}
         </p>
       </section>
+
+      {activeFormula ? (
+        <div
+          className="formula-modal-backdrop"
+          onClick={() => {
+            setActiveFormula(null);
+          }}
+          role="presentation"
+        >
+          <div
+            className="formula-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Formula ampliada"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <div className="formula-modal-header">
+              <p className="formula-modal-title">Formula ampliada</p>
+              <button
+                type="button"
+                className="formula-modal-close"
+                onClick={() => {
+                  setActiveFormula(null);
+                }}
+                aria-label="Cerrar formula"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="formula-modal-body">
+              <div
+                className="formula-modal-math"
+                dangerouslySetInnerHTML={{ __html: activeFormulaMarkup }}
+              />
+              <pre className="formula-modal-source">{activeFormula.latex}</pre>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
