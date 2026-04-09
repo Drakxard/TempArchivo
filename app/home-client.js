@@ -77,6 +77,7 @@ export default function HomeClient({ initialContent }) {
   const cachedImageVersionRef = useRef(null);
   const imagePrefetchPromiseRef = useRef(null);
   const lastHoverCopyAtRef = useRef(0);
+  const isSavingTextRef = useRef(false);
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [isBusy, setIsBusy] = useState(false);
@@ -427,16 +428,18 @@ export default function HomeClient({ initialContent }) {
     }
   }
 
-  async function saveText(value) {
+  async function saveText(value, options = {}) {
+    const { clearMobileInput = false, blurMobileInput = false } = options;
     const text = value.trim();
     if (!text) {
       setStatus({
         kind: "error",
         message: "El texto pegado estaba vacio.",
       });
-      return;
+      return false;
     }
 
+    isSavingTextRef.current = true;
     setIsBusy(true);
     clearPendingImage();
     clearCachedImageBlob();
@@ -456,10 +459,21 @@ export default function HomeClient({ initialContent }) {
 
       const data = await response.json();
       setContent(data.content);
+      if (clearMobileInput) {
+        setMobilePasteValue("");
+      }
+
+      if (blurMobileInput) {
+        mobilePasteRef.current?.blur();
+      }
+
       setStatus({ kind: "success", message: "Texto cargado." });
+      return true;
     } catch {
       setStatus({ kind: "error", message: "No se pudo guardar el texto." });
+      return false;
     } finally {
+      isSavingTextRef.current = false;
       setIsBusy(false);
     }
   }
@@ -730,9 +744,22 @@ export default function HomeClient({ initialContent }) {
 
     event.preventDefault();
     event.stopPropagation();
-    setMobilePasteValue("");
-    mobilePasteRef.current?.blur();
-    await saveText(pastedText);
+    setMobilePasteValue(pastedText);
+    await saveText(pastedText, {
+      clearMobileInput: true,
+      blurMobileInput: true,
+    });
+  }
+
+  function onMobilePasteInputChange(event) {
+    const nextValue = event.target.value;
+    setMobilePasteValue(nextValue);
+
+    if (!nextValue || isSavingTextRef.current) {
+      return;
+    }
+
+    void saveText(nextValue, { clearMobileInput: true });
   }
 
   const displayedContent =
@@ -910,9 +937,7 @@ export default function HomeClient({ initialContent }) {
             ref={mobilePasteRef}
             className="mobile-paste-input"
             value={mobilePasteValue}
-            onChange={(event) => {
-              setMobilePasteValue(event.target.value);
-            }}
+            onChange={onMobilePasteInputChange}
             onPaste={(event) => {
               void onMobilePaste(event);
             }}
