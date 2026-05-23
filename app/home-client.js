@@ -1,10 +1,22 @@
 "use client";
 
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import {
+  appendTextHistoryEntry,
+  clearStoredDirectoryHandle,
+  getDirectoryPermission,
+  getStoredDirectoryHandle,
+  isDesktopHistorySupported,
+  pickDirectoryHandle,
+  readTextHistoryEntries,
+  requestDirectoryPermission,
+  saveDirectoryHandle,
+  searchHistoryEntries,
+} from "../lib/local-history";
 
 const EMPTY_STATUS = { kind: "idle", message: "" };
 const MAX_UPLOAD_EDGE = 2000;
@@ -71,6 +83,7 @@ export default function HomeClient({ initialContent }) {
   const fileInputRef = useRef(null);
   const mobilePasteRef = useRef(null);
   const textDocumentRef = useRef(null);
+  const searchInputRef = useRef(null);
   const resizeSessionRef = useRef(null);
   const pendingImageUrlRef = useRef(null);
   const cachedImageBlobRef = useRef(null);
@@ -89,6 +102,16 @@ export default function HomeClient({ initialContent }) {
   const [textCardWidth, setTextCardWidth] = useState(DEFAULT_TEXT_CARD_WIDTH);
   const [activeFormula, setActiveFormula] = useState(null);
   const [formulaScale, setFormulaScale] = useState(DEFAULT_FORMULA_SCALE);
+  const [isDesktopHistoryCapable, setIsDesktopHistoryCapable] = useState(false);
+  const [directoryHandle, setDirectoryHandle] = useState(null);
+  const [historyEntries, setHistoryEntries] = useState([]);
+  const [activeHistoryEntryId, setActiveHistoryEntryId] = useState(null);
+  const [shouldShowFolderPrompt, setShouldShowFolderPrompt] = useState(false);
+  const [isFolderRequestPending, setIsFolderRequestPending] = useState(false);
+  const [searchBarOpen, setSearchBarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [hasSearchRun, setHasSearchRun] = useState(false);
 
   const hint = useMemo(() => {
     if (isTouchDevice) {
@@ -97,6 +120,15 @@ export default function HomeClient({ initialContent }) {
 
     return "Ctrl+V o click para imagen";
   }, [isTouchDevice]);
+
+  const isDesktopTextHistoryEnabled =
+    isDesktopHistoryCapable && !isTouchDevice && !!directoryHandle;
+
+  const activeHistoryEntry = useMemo(
+    () => historyEntries.find((entry) => entry.id === activeHistoryEntryId) ?? null,
+    [activeHistoryEntryId, historyEntries],
+  );
+  const isTextViewVisible = !!activeHistoryEntry || content?.type === "text";
 
   function clearPendingImage() {
     if (pendingImageUrlRef.current) {
@@ -236,6 +268,7 @@ export default function HomeClient({ initialContent }) {
     const coarsePointer = window.matchMedia("(pointer: coarse)");
     const updateDeviceMode = () => {
       setIsTouchDevice(coarsePointer.matches || navigator.maxTouchPoints > 0);
+      setIsDesktopHistoryCapable(isDesktopHistorySupported());
     };
 
     updateDeviceMode();
@@ -249,6 +282,21 @@ export default function HomeClient({ initialContent }) {
       clearCachedImageBlob();
     };
   }, []);
+
+  useEffect(() => {
+    if (!searchBarOpen) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [searchBarOpen]);
 
   useEffect(() => {
     const savedWidth = window.localStorage.getItem(TEXT_CARD_WIDTH_KEY);
@@ -314,6 +362,225 @@ export default function HomeClient({ initialContent }) {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [activeFormula]);
+
+  const disableLocalHistoryAccess = useCallback(async () => {
+    setDirectoryHandle(null);
+    setHistoryEntries([]);
+    setActiveHistoryEntryId(null);
+    setSearchBarOpen(false);
+    setSearchResults([]);
+    setHasSearchRun(false);
+    setSearchQuery("");
+    setShouldShowFolderPrompt(isDesktopHistoryCapable && !isTouchDevice);
+
+    try {
+      await clearStoredDirectoryHandle();
+    } catch {
+      // Best effort cleanup; UI is already degraded to remote-only mode.
+    }
+  }, [isDesktopHistoryCapable, isTouchDevice]);
+
+  const loadLocalHistory = useCallback(async (handle, options = {}) => {
+    const { selectedEntryId = null, preserveActiveEntry = false } = options;
+    const entries = await readTextHistoryEntries(handle);
+
+    setHistoryEntries(entries);
+
+    setActiveHistoryEntryId((currentId) => {
+      if (selectedEntryId && entries.some((entry) => entry.id === selectedEntryId)) {
+        return selectedEntryId;
+      }
+
+      if (preserveActiveEntry && currentId && entries.some((entry) => entry.id === currentId)) {
+        return currentId;
+      }
+
+      if (selectedEntryId === null) {
+        return currentId && entries.some((entry) => entry.id === currentId) ? currentId : null;
+      }
+
+      return null;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktopHistoryCapable || isTouchDevice) {
+      setShouldShowFolderPrompt(false);
+      return undefined;
+    }
+
+    let ignore = false;
+
+    const restoreDirectoryAccess = async () => {
+      try {
+        const storedHandle = await getStoredDirectoryHandle();
+
+        if (!storedHandle) {
+          if (!ignore) {
+            setShouldShowFolderPrompt(true);
+          }
+          return;
+        }
+
+        const permission = await getDirectoryPermission(storedHandle);
+        if (permission !== "granted") {
+          await clearStoredDirectoryHandle();
+
+          if (!ignore) {
+            setShouldShowFolderPrompt(true);
+          }
+          return;
+        }
+
+        if (ignore) {
+          return;
+        }
+
+        setDirectoryHandle(storedHandle);
+        setShouldShowFolderPrompt(false);
+        await loadLocalHistory(storedHandle, { preserveActiveEntry: true });
+      } catch {
+        if (!ignore) {
+          void disableLocalHistoryAccess();
+        }
+      }
+    };
+
+    void restoreDirectoryAccess();
+
+    return () => {
+      ignore = true;
+    };
+  }, [
+    disableLocalHistoryAccess,
+    isDesktopHistoryCapable,
+    isTouchDevice,
+    loadLocalHistory,
+  ]);
+
+  async function openDirectoryPicker() {
+    if (!isDesktopHistoryCapable || isTouchDevice || isFolderRequestPending) {
+      return;
+    }
+
+    setIsFolderRequestPending(true);
+
+    try {
+      const pickedHandle = await pickDirectoryHandle();
+      const permission = await requestDirectoryPermission(pickedHandle);
+
+      if (permission !== "granted") {
+        throw new Error("Folder access denied.");
+      }
+
+      await saveDirectoryHandle(pickedHandle);
+      setDirectoryHandle(pickedHandle);
+      setShouldShowFolderPrompt(false);
+      await loadLocalHistory(pickedHandle, { selectedEntryId: null });
+      setStatus({ kind: "success", message: "Historial local activado." });
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        setStatus({
+          kind: "error",
+          message: "No se pudo activar el historial local.",
+        });
+      }
+
+      setShouldShowFolderPrompt(false);
+    } finally {
+      setIsFolderRequestPending(false);
+    }
+  }
+
+  function loadHistoryEntryById(entryId) {
+    setActiveHistoryEntryId(entryId);
+    setSearchBarOpen(false);
+  }
+
+  const navigateHistory = useEffectEvent((direction) => {
+    if (!historyEntries.length) {
+      return;
+    }
+
+    const activeIndex = activeHistoryEntryId
+      ? historyEntries.findIndex((entry) => entry.id === activeHistoryEntryId)
+      : historyEntries.length - 1;
+
+    if (activeIndex === -1) {
+      return;
+    }
+
+    const nextIndex = activeIndex + direction;
+
+    if (nextIndex < 0 || nextIndex >= historyEntries.length) {
+      return;
+    }
+
+    setActiveHistoryEntryId(historyEntries[nextIndex].id);
+  });
+
+  function runHistorySearch(query) {
+    const results = searchHistoryEntries(historyEntries, query);
+    setSearchResults(results);
+    setHasSearchRun(true);
+  }
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (event) => {
+      const target = event.target;
+      const isTypingTarget =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === "f" &&
+        isDesktopTextHistoryEnabled &&
+        !activeFormula
+      ) {
+        event.preventDefault();
+        setSearchBarOpen(true);
+        return;
+      }
+
+      if (event.key === "Escape" && searchBarOpen) {
+        setSearchBarOpen(false);
+        return;
+      }
+
+      if (
+        isTypingTarget ||
+        activeFormula ||
+        !isDesktopTextHistoryEnabled ||
+        !isTextViewVisible
+      ) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        navigateHistory(-1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        navigateHistory(1);
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, [
+    activeFormula,
+    activeHistoryEntry,
+    activeHistoryEntryId,
+    historyEntries,
+    isTextViewVisible,
+    isDesktopTextHistoryEnabled,
+    searchBarOpen,
+  ]);
 
   async function fetchCurrentImageBlob() {
     const response = await fetch("/api/content/image", { cache: "no-store" });
@@ -459,12 +726,32 @@ export default function HomeClient({ initialContent }) {
 
       const data = await response.json();
       setContent(data.content);
+      let savedLocalEntry = null;
+
+      if (isDesktopTextHistoryEnabled) {
+        try {
+          savedLocalEntry = await appendTextHistoryEntry(directoryHandle, text);
+          setHistoryEntries((currentEntries) =>
+            [...currentEntries, savedLocalEntry].sort(
+              (left, right) => left.timestamp - right.timestamp,
+            ),
+          );
+          setActiveHistoryEntryId(savedLocalEntry.id);
+        } catch {
+          await disableLocalHistoryAccess();
+        }
+      }
+
       if (clearMobileInput) {
         setMobilePasteValue("");
       }
 
       if (blurMobileInput) {
         mobilePasteRef.current?.blur();
+      }
+
+      if (!savedLocalEntry) {
+        setActiveHistoryEntryId(null);
       }
 
       setStatus({ kind: "success", message: "Texto cargado." });
@@ -483,6 +770,7 @@ export default function HomeClient({ initialContent }) {
 
     setIsBusy(true);
     setIsReplacingImage(true);
+    setActiveHistoryEntryId(null);
     clearCachedImageBlob();
     pendingImageUrlRef.current = previewUrl;
     setPendingImageUrl(previewUrl);
@@ -581,12 +869,15 @@ export default function HomeClient({ initialContent }) {
   }
 
   async function copyCurrentText() {
-    if (!content || content.type !== "text") {
+    const textValue =
+      activeHistoryEntry?.text || (content?.type === "text" ? content.value : null);
+
+    if (!textValue) {
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(content.value);
+      await navigator.clipboard.writeText(textValue);
       setStatus({ kind: "success", message: "Copiado." });
     } catch {
       setStatus({
@@ -765,7 +1056,14 @@ export default function HomeClient({ initialContent }) {
   const displayedContent =
     pendingImageUrl && isReplacingImage
       ? { type: "image", value: pendingImageUrl, isPending: true }
-      : content;
+      : activeHistoryEntry
+        ? {
+            type: "text",
+            value: activeHistoryEntry.text,
+            sourceLabel: activeHistoryEntry.label,
+            isHistoryEntry: true,
+          }
+        : content;
 
   const textCardStyle = {
     width: `min(100%, ${textCardWidth}px)`,
@@ -895,8 +1193,29 @@ export default function HomeClient({ initialContent }) {
                 aria-hidden="true"
               />
               <div className="text-card-header">
-                <span className="text-card-chip">Texto</span>
+                <div className="text-card-header-copy">
+                  <span className="text-card-chip">
+                    {displayedContent.isHistoryEntry ? "Texto local" : "Texto"}
+                  </span>
+                  {displayedContent.sourceLabel ? (
+                    <span className="text-card-history-label">
+                      {displayedContent.sourceLabel}
+                    </span>
+                  ) : null}
+                </div>
                 <div className="text-card-actions">
+                  {displayedContent.isHistoryEntry ? (
+                    <button
+                      type="button"
+                      className="text-copy-button"
+                      onClick={() => {
+                        setActiveHistoryEntryId(null);
+                      }}
+                      disabled={isBusy}
+                    >
+                      Volver al actual
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="text-copy-button"
@@ -930,6 +1249,18 @@ export default function HomeClient({ initialContent }) {
           >
             {displayedContent ? "Reemplazar con imagen" : "Elegir imagen"}
           </button>
+          {isDesktopHistoryCapable && !isTouchDevice && !directoryHandle ? (
+            <button
+              type="button"
+              className="ghost-action"
+              onClick={() => {
+                setShouldShowFolderPrompt(true);
+              }}
+              disabled={isBusy || isFolderRequestPending}
+            >
+              Activar historial local
+            </button>
+          ) : null}
         </div>
 
         {isTouchDevice ? (
@@ -1032,6 +1363,116 @@ export default function HomeClient({ initialContent }) {
                 style={{ "--formula-scale": formulaScale }}
                 dangerouslySetInnerHTML={{ __html: activeFormulaMarkup }}
               />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {searchBarOpen ? (
+        <div className="history-search-overlay" role="presentation">
+          <div className="history-search-panel">
+            <form
+              className="history-search-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                runHistorySearch(searchQuery);
+              }}
+            >
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="history-search-input"
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                }}
+                placeholder="Buscar en pegados locales"
+                aria-label="Buscar en historial local"
+              />
+              <button type="submit" className="history-search-submit">
+                Buscar
+              </button>
+              <button
+                type="button"
+                className="history-search-close"
+                onClick={() => {
+                  setSearchBarOpen(false);
+                }}
+              >
+                Cerrar
+              </button>
+            </form>
+
+            {hasSearchRun ? (
+              searchResults.length ? (
+                <div className="history-search-results">
+                  {searchResults.map((result) => (
+                    <button
+                      key={result.entryId}
+                      type="button"
+                      className="history-search-result"
+                      onClick={() => {
+                        loadHistoryEntryById(result.entryId);
+                      }}
+                    >
+                      <span className="history-search-result-head">
+                        <span>{result.label}</span>
+                        <span>{result.matches.length} coincidencia(s)</span>
+                      </span>
+                      <span className="history-search-result-preview">
+                        {result.preview}
+                      </span>
+                      <span className="history-search-result-paragraph">
+                        {result.matches[0].paragraph}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="history-search-empty">
+                  No se encontraron coincidencias en el historial local.
+                </p>
+              )
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {shouldShowFolderPrompt ? (
+        <div className="folder-access-backdrop" role="presentation">
+          <div
+            className="folder-access-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Activar historial local"
+          >
+            <p className="folder-access-title">Activar historial local</p>
+            <p className="folder-access-copy">
+              Selecciona una carpeta para guardar y navegar los pegados de texto
+              desde esta PC. Si ya das acceso una vez, la app intentara reutilizarlo
+              en los siguientes inicios.
+            </p>
+            <div className="folder-access-actions">
+              <button
+                type="button"
+                className="formula-modal-close"
+                onClick={() => {
+                  void openDirectoryPicker();
+                }}
+                disabled={isFolderRequestPending}
+              >
+                {isFolderRequestPending ? "Abriendo..." : "Seleccionar carpeta"}
+              </button>
+              <button
+                type="button"
+                className="ghost-action"
+                onClick={() => {
+                  setShouldShowFolderPrompt(false);
+                }}
+                disabled={isFolderRequestPending}
+              >
+                Ahora no
+              </button>
             </div>
           </div>
         </div>
