@@ -1282,16 +1282,6 @@ export default function HomeClient({ initialContent }) {
                   <span className="text-card-chip">
                     {displayedContent.isHistoryEntry ? "Texto local" : "Texto"}
                   </span>
-                  {displayedContent.sourceLabel ? (
-                    <span className="text-card-history-label">
-                      {displayedContent.sourceLabel}
-                      {displayedContent.historySource === "r2"
-                        ? " · sincronizado desde la web"
-                        : displayedContent.historySource === "local"
-                          ? " · guardado local"
-                          : ""}
-                    </span>
-                  ) : null}
                 </div>
                 <div className="text-card-actions">
                   {displayedContent.isHistoryEntry ? (
