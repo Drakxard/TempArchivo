@@ -8,6 +8,7 @@ import remarkMath from "remark-math";
 import {
   appendTextHistoryEntry,
   clearStoredDirectoryHandle,
+  createTextFingerprint,
   getDirectoryPermission,
   getStoredDirectoryHandle,
   isDesktopHistorySupported,
@@ -91,6 +92,7 @@ export default function HomeClient({ initialContent }) {
   const imagePrefetchPromiseRef = useRef(null);
   const lastHoverCopyAtRef = useRef(0);
   const isSavingTextRef = useRef(false);
+  const remoteSyncInFlightRef = useRef(false);
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [isBusy, setIsBusy] = useState(false);
@@ -105,6 +107,7 @@ export default function HomeClient({ initialContent }) {
   const [isDesktopHistoryCapable, setIsDesktopHistoryCapable] = useState(false);
   const [directoryHandle, setDirectoryHandle] = useState(null);
   const [historyEntries, setHistoryEntries] = useState([]);
+  const [isHistoryReady, setIsHistoryReady] = useState(false);
   const [activeHistoryEntryId, setActiveHistoryEntryId] = useState(null);
   const [shouldShowFolderPrompt, setShouldShowFolderPrompt] = useState(false);
   const [isFolderRequestPending, setIsFolderRequestPending] = useState(false);
@@ -129,6 +132,8 @@ export default function HomeClient({ initialContent }) {
     [activeHistoryEntryId, historyEntries],
   );
   const isTextViewVisible = !!activeHistoryEntry || content?.type === "text";
+  const currentRemoteTextFingerprint =
+    content?.type === "text" ? createTextFingerprint(content.value) : null;
 
   function clearPendingImage() {
     if (pendingImageUrlRef.current) {
@@ -366,6 +371,7 @@ export default function HomeClient({ initialContent }) {
   const disableLocalHistoryAccess = useCallback(async () => {
     setDirectoryHandle(null);
     setHistoryEntries([]);
+    setIsHistoryReady(false);
     setActiveHistoryEntryId(null);
     setSearchBarOpen(false);
     setSearchResults([]);
@@ -385,6 +391,7 @@ export default function HomeClient({ initialContent }) {
     const entries = await readTextHistoryEntries(handle);
 
     setHistoryEntries(entries);
+    setIsHistoryReady(true);
 
     setActiveHistoryEntryId((currentId) => {
       if (selectedEntryId && entries.some((entry) => entry.id === selectedEntryId)) {
@@ -406,6 +413,7 @@ export default function HomeClient({ initialContent }) {
   useEffect(() => {
     if (!isDesktopHistoryCapable || isTouchDevice) {
       setShouldShowFolderPrompt(false);
+      setIsHistoryReady(false);
       return undefined;
     }
 
@@ -457,6 +465,23 @@ export default function HomeClient({ initialContent }) {
     isTouchDevice,
     loadLocalHistory,
   ]);
+
+  const mergeHistoryEntry = useCallback((nextEntry) => {
+    if (!nextEntry) {
+      return;
+    }
+
+    setHistoryEntries((currentEntries) => {
+      const withoutDuplicates = currentEntries.filter(
+        (entry) =>
+          entry.id !== nextEntry.id && entry.fingerprint !== nextEntry.fingerprint,
+      );
+
+      return [...withoutDuplicates, nextEntry].sort(
+        (left, right) => left.timestamp - right.timestamp,
+      );
+    });
+  }, []);
 
   async function openDirectoryPicker() {
     if (!isDesktopHistoryCapable || isTouchDevice || isFolderRequestPending) {
@@ -730,13 +755,13 @@ export default function HomeClient({ initialContent }) {
 
       if (isDesktopTextHistoryEnabled) {
         try {
-          savedLocalEntry = await appendTextHistoryEntry(directoryHandle, text);
-          setHistoryEntries((currentEntries) =>
-            [...currentEntries, savedLocalEntry].sort(
-              (left, right) => left.timestamp - right.timestamp,
-            ),
-          );
-          setActiveHistoryEntryId(savedLocalEntry.id);
+          const result = await appendTextHistoryEntry(directoryHandle, text, {
+            source: "local",
+            createdAt: data.content?.updatedAt,
+          });
+          savedLocalEntry = result.entry;
+          mergeHistoryEntry(savedLocalEntry);
+          setActiveHistoryEntryId(savedLocalEntry?.id ?? null);
         } catch {
           await disableLocalHistoryAccess();
         }
@@ -1053,6 +1078,65 @@ export default function HomeClient({ initialContent }) {
     void saveText(nextValue, { clearMobileInput: true });
   }
 
+  useEffect(() => {
+    if (
+      !isDesktopTextHistoryEnabled ||
+      !isHistoryReady ||
+      !directoryHandle ||
+      !content ||
+      content.type !== "text" ||
+      remoteSyncInFlightRef.current
+    ) {
+      return;
+    }
+
+    const alreadySynced = historyEntries.some(
+      (entry) => entry.fingerprint === currentRemoteTextFingerprint,
+    );
+
+    if (alreadySynced) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncRemoteText = async () => {
+      remoteSyncInFlightRef.current = true;
+
+      try {
+        const result = await appendTextHistoryEntry(directoryHandle, content.value, {
+          source: "r2",
+          createdAt: content.updatedAt,
+        });
+
+        if (!cancelled) {
+          mergeHistoryEntry(result.entry);
+        }
+      } catch {
+        if (!cancelled) {
+          await disableLocalHistoryAccess();
+        }
+      } finally {
+        remoteSyncInFlightRef.current = false;
+      }
+    };
+
+    void syncRemoteText();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    content,
+    currentRemoteTextFingerprint,
+    directoryHandle,
+    disableLocalHistoryAccess,
+    historyEntries,
+    isDesktopTextHistoryEnabled,
+    isHistoryReady,
+    mergeHistoryEntry,
+  ]);
+
   const displayedContent =
     pendingImageUrl && isReplacingImage
       ? { type: "image", value: pendingImageUrl, isPending: true }
@@ -1062,6 +1146,7 @@ export default function HomeClient({ initialContent }) {
             value: activeHistoryEntry.text,
             sourceLabel: activeHistoryEntry.label,
             isHistoryEntry: true,
+            historySource: activeHistoryEntry.source,
           }
         : content;
 
@@ -1200,6 +1285,11 @@ export default function HomeClient({ initialContent }) {
                   {displayedContent.sourceLabel ? (
                     <span className="text-card-history-label">
                       {displayedContent.sourceLabel}
+                      {displayedContent.historySource === "r2"
+                        ? " · sincronizado desde la web"
+                        : displayedContent.historySource === "local"
+                          ? " · guardado local"
+                          : ""}
                     </span>
                   ) : null}
                 </div>
