@@ -377,14 +377,14 @@ export default function HomeClient({ initialContent }) {
     setSearchResults([]);
     setHasSearchRun(false);
     setSearchQuery("");
-    setShouldShowFolderPrompt(isDesktopHistoryCapable && !isTouchDevice);
+    setShouldShowFolderPrompt(false);
 
     try {
       await clearStoredDirectoryHandle();
     } catch {
       // Best effort cleanup; UI is already degraded to remote-only mode.
     }
-  }, [isDesktopHistoryCapable, isTouchDevice]);
+  }, []);
 
   const loadLocalHistory = useCallback(async (handle, options = {}) => {
     const { selectedEntryId = null, preserveActiveEntry = false } = options;
@@ -424,9 +424,6 @@ export default function HomeClient({ initialContent }) {
         const storedHandle = await getStoredDirectoryHandle();
 
         if (!storedHandle) {
-          if (!ignore) {
-            setShouldShowFolderPrompt(true);
-          }
           return;
         }
 
@@ -434,9 +431,6 @@ export default function HomeClient({ initialContent }) {
         if (permission !== "granted") {
           await clearStoredDirectoryHandle();
 
-          if (!ignore) {
-            setShouldShowFolderPrompt(true);
-          }
           return;
         }
 
@@ -561,12 +555,17 @@ export default function HomeClient({ initialContent }) {
 
       if (
         (event.ctrlKey || event.metaKey) &&
-        event.key.toLowerCase() === "f" &&
-        isDesktopTextHistoryEnabled &&
+        event.key.toLowerCase() === "q" &&
+        isDesktopHistoryCapable &&
+        !isTouchDevice &&
         !activeFormula
       ) {
         event.preventDefault();
-        setSearchBarOpen(true);
+        if (isDesktopTextHistoryEnabled) {
+          setSearchBarOpen(true);
+        } else {
+          setShouldShowFolderPrompt(true);
+        }
         return;
       }
 
@@ -602,8 +601,10 @@ export default function HomeClient({ initialContent }) {
     activeHistoryEntry,
     activeHistoryEntryId,
     historyEntries,
+    isDesktopHistoryCapable,
     isTextViewVisible,
     isDesktopTextHistoryEnabled,
+    isTouchDevice,
     searchBarOpen,
   ]);
 
@@ -1329,18 +1330,6 @@ export default function HomeClient({ initialContent }) {
           >
             {displayedContent ? "Reemplazar con imagen" : "Elegir imagen"}
           </button>
-          {isDesktopHistoryCapable && !isTouchDevice && !directoryHandle ? (
-            <button
-              type="button"
-              className="ghost-action"
-              onClick={() => {
-                setShouldShowFolderPrompt(true);
-              }}
-              disabled={isBusy || isFolderRequestPending}
-            >
-              Activar historial local
-            </button>
-          ) : null}
         </div>
 
         {isTouchDevice ? (
