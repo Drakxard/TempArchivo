@@ -87,6 +87,7 @@ export default function HomeClient({ initialContent }) {
   const textDocumentRef = useRef(null);
   const searchInputRef = useRef(null);
   const resizeSessionRef = useRef(null);
+  const fileDragDepthRef = useRef(0);
   const cachedImageBlobRef = useRef(null);
   const cachedImageVersionRef = useRef(null);
   const imagePrefetchPromiseRef = useRef(null);
@@ -97,6 +98,7 @@ export default function HomeClient({ initialContent }) {
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [isBusy, setIsBusy] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isResizingTextCard, setIsResizingTextCard] = useState(false);
   const [uploadState, setUploadState] = useState(null);
   const [readyImageUrl, setReadyImageUrl] = useState(null);
@@ -1200,6 +1202,64 @@ export default function HomeClient({ initialContent }) {
     fileInputRef.current?.click();
   }
 
+  function hasDraggedFiles(event) {
+    return Array.from(event.dataTransfer?.types || []).includes("Files");
+  }
+
+  function handleFileDragEnter(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    fileDragDepthRef.current += 1;
+
+    if (!isBusy) {
+      setIsDraggingFile(true);
+    }
+  }
+
+  function handleFileDragOver(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = isBusy ? "none" : "copy";
+  }
+
+  function handleFileDragLeave(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+
+    if (fileDragDepthRef.current === 0) {
+      setIsDraggingFile(false);
+    }
+  }
+
+  async function handleFileDrop(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    fileDragDepthRef.current = 0;
+    setIsDraggingFile(false);
+
+    if (isBusy) {
+      return;
+    }
+
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      await uploadFile(file);
+    }
+  }
+
   async function onFileChange(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -1388,7 +1448,15 @@ export default function HomeClient({ initialContent }) {
     : "";
 
   return (
-    <main className="page-shell">
+    <main
+      className={`page-shell ${isDraggingFile ? "is-file-dragging" : ""}`}
+      onDragEnter={handleFileDragEnter}
+      onDragOver={handleFileDragOver}
+      onDragLeave={handleFileDragLeave}
+      onDrop={(event) => {
+        void handleFileDrop(event);
+      }}
+    >
       <input
         ref={fileInputRef}
         className="hidden-input"
@@ -1576,6 +1644,16 @@ export default function HomeClient({ initialContent }) {
           {status.kind === "idle" ? " " : status.message}
         </p>
       </section>
+
+      {isDraggingFile ? (
+        <div className="file-drop-overlay" aria-hidden="true">
+          <div className="file-drop-card">
+            <span className="file-drop-icon">+</span>
+            <span>Soltar archivo para subir</span>
+            <small>Máximo 200 MB</small>
+          </div>
+        </div>
+      ) : null}
 
       {activeFormula ? (
         <div
