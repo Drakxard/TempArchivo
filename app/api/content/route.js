@@ -1,11 +1,15 @@
 import {
-  deleteImageIfNeeded,
+  deleteStoredObjectIfNeeded,
   readResolvedContent,
   readStoredContent,
   writeStoredContent,
 } from "../../../lib/content-store";
 import {
   createImageKey,
+  deleteR2Object,
+  headR2Object,
+  isUploadStorageKey,
+  MAX_FILE_BYTES,
   resolveContentForClient,
   uploadR2Object,
 } from "../../../lib/r2";
@@ -43,6 +47,9 @@ export async function GET() {
 }
 
 export async function PUT(request) {
+  let pendingKey = null;
+  let published = false;
+
   try {
     const previousContent = await readStoredContent();
     const contentType = request.headers.get("content-type") || "";
@@ -66,23 +73,82 @@ export async function PUT(request) {
         };
 
         await writeStoredContent(nextContent);
-        await deleteImageIfNeeded(previousContent, nextContent);
+        await deleteStoredObjectIfNeeded(previousContent, nextContent);
 
         return json({ content: nextContent });
       }
 
-      if (body?.type === "image" && typeof body?.key === "string" && body.key) {
+      if (
+        (body?.type === "image" || body?.type === "file") &&
+        isUploadStorageKey(body?.key)
+      ) {
+        pendingKey = body.key;
+        const filename = String(body?.filename || "archivo")
+          .replace(/[\r\n]/g, "")
+          .trim()
+          .slice(0, 255) || "archivo";
+        const declaredContentType =
+          typeof body?.contentType === "string" &&
+          /^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(body.contentType.trim())
+            ? body.contentType.trim().toLowerCase()
+            : "application/octet-stream";
+        const declaredSize = Number(body?.size);
+
+        if (
+          !Number.isInteger(declaredSize) ||
+          declaredSize < 0 ||
+          declaredSize > MAX_FILE_BYTES
+        ) {
+          if (previousContent?.value !== pendingKey) {
+            await deleteR2Object(pendingKey).catch(() => {});
+          }
+          pendingKey = null;
+          return json({ error: "El tamaño del archivo no es válido." }, { status: 400 });
+        }
+
+        if (body.type === "image" && !declaredContentType.startsWith("image/")) {
+          if (previousContent?.value !== pendingKey) {
+            await deleteR2Object(pendingKey).catch(() => {});
+          }
+          pendingKey = null;
+          return json(
+            { error: "El tipo declarado no corresponde a una imagen." },
+            { status: 400 },
+          );
+        }
+
+        const object = await headR2Object(pendingKey);
+        if (
+          object.contentLength !== declaredSize ||
+          object.contentLength > MAX_FILE_BYTES ||
+          object.contentType.toLowerCase() !== declaredContentType
+        ) {
+          if (previousContent?.value !== pendingKey) {
+            await deleteR2Object(pendingKey).catch(() => {});
+          }
+          pendingKey = null;
+          return json(
+            { error: "El archivo subido no coincide con sus metadatos." },
+            { status: 400 },
+          );
+        }
+
         const nextContent = {
-          type: "image",
-          value: body.key,
+          type: body.type,
+          value: pendingKey,
           storage: "r2",
+          filename,
+          contentType: declaredContentType,
+          size: declaredSize,
           updatedAt: new Date().toISOString(),
         };
 
+        const resolvedContent = await resolveContentForClient(nextContent);
         await writeStoredContent(nextContent);
-        await deleteImageIfNeeded(previousContent, nextContent);
+        published = true;
+        await deleteStoredObjectIfNeeded(previousContent, nextContent);
 
-        return json({ content: await resolveContentForClient(nextContent) });
+        return json({ content: resolvedContent });
       }
 
       return json(
@@ -102,6 +168,10 @@ export async function PUT(request) {
         );
       }
 
+      if (file.size > MAX_FILE_BYTES) {
+        return json({ error: "El archivo supera el límite de 200 MB." }, { status: 413 });
+      }
+
       const key = createImageKey(file.type);
       const nextContent = {
         type: "image",
@@ -112,7 +182,7 @@ export async function PUT(request) {
 
       await uploadR2Object(key, Buffer.from(await file.arrayBuffer()), file.type);
       await writeStoredContent(nextContent);
-      await deleteImageIfNeeded(previousContent, nextContent);
+      await deleteStoredObjectIfNeeded(previousContent, nextContent);
 
       return json({ content: await resolveContentForClient(nextContent) });
     }
@@ -122,6 +192,17 @@ export async function PUT(request) {
       { status: 415 },
     );
   } catch (error) {
+    if (pendingKey && !published) {
+      try {
+        const currentContent = await readStoredContent();
+        if (currentContent?.value !== pendingKey) {
+          await deleteR2Object(pendingKey);
+        }
+      } catch {
+        // Best effort cleanup; never hide the original upload error.
+      }
+    }
+
     return json(
       { error: "No se pudo reemplazar el contenido actual." },
       { status: 500 },

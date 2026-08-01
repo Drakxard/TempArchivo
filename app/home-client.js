@@ -21,7 +21,8 @@ import {
 
 const EMPTY_STATUS = { kind: "idle", message: "" };
 const MAX_UPLOAD_EDGE = 2000;
-const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const MAX_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024;
+const MAX_FILE_BYTES = 200 * 1024 * 1024;
 const HOVER_COPY_COOLDOWN_MS = 2000;
 const TEXT_CARD_WIDTH_KEY = "temp-archivo-text-card-width";
 const FORMULA_SCALE_KEY = "temp-archivo-formula-scale";
@@ -86,7 +87,6 @@ export default function HomeClient({ initialContent }) {
   const textDocumentRef = useRef(null);
   const searchInputRef = useRef(null);
   const resizeSessionRef = useRef(null);
-  const pendingImageUrlRef = useRef(null);
   const cachedImageBlobRef = useRef(null);
   const cachedImageVersionRef = useRef(null);
   const imagePrefetchPromiseRef = useRef(null);
@@ -97,9 +97,11 @@ export default function HomeClient({ initialContent }) {
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [isBusy, setIsBusy] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [isReplacingImage, setIsReplacingImage] = useState(false);
   const [isResizingTextCard, setIsResizingTextCard] = useState(false);
-  const [pendingImageUrl, setPendingImageUrl] = useState(null);
+  const [uploadState, setUploadState] = useState(null);
+  const [readyImageUrl, setReadyImageUrl] = useState(null);
+  const [imageLoadError, setImageLoadError] = useState(false);
+  const [imageRetryCount, setImageRetryCount] = useState(0);
   const [mobilePasteValue, setMobilePasteValue] = useState("");
   const [textCardWidth, setTextCardWidth] = useState(DEFAULT_TEXT_CARD_WIDTH);
   const [activeFormula, setActiveFormula] = useState(null);
@@ -118,10 +120,10 @@ export default function HomeClient({ initialContent }) {
 
   const hint = useMemo(() => {
     if (isTouchDevice) {
-      return "Tocar para elegir imagen";
+      return "Tocar para elegir archivo";
     }
 
-    return "Ctrl+V o click para imagen";
+    return "Ctrl+V para pegar o click para elegir archivo";
   }, [isTouchDevice]);
 
   const isDesktopTextHistoryEnabled =
@@ -134,15 +136,6 @@ export default function HomeClient({ initialContent }) {
   const isTextViewVisible = !!activeHistoryEntry || content?.type === "text";
   const currentRemoteTextFingerprint =
     content?.type === "text" ? createTextFingerprint(content.value) : null;
-
-  function clearPendingImage() {
-    if (pendingImageUrlRef.current) {
-      URL.revokeObjectURL(pendingImageUrlRef.current);
-      pendingImageUrlRef.current = null;
-    }
-
-    setPendingImageUrl(null);
-  }
 
   function clearCachedImageBlob() {
     cachedImageBlobRef.current = null;
@@ -190,7 +183,7 @@ export default function HomeClient({ initialContent }) {
 
   async function prepareUploadFile(file) {
     if (
-      file.size <= MAX_UPLOAD_BYTES &&
+      file.size <= MAX_IMAGE_UPLOAD_BYTES &&
       file.type !== "image/heic" &&
       file.type !== "image/heif"
     ) {
@@ -239,7 +232,91 @@ export default function HomeClient({ initialContent }) {
     });
   }
 
+  function preloadImageUrl(url) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+
+      image.onload = async () => {
+        try {
+          await image.decode?.();
+        } catch {
+          // A completed load is enough on browsers with partial decode support.
+        }
+        resolve();
+      };
+      image.onerror = () => reject(new Error("No se pudo cargar la imagen."));
+      image.src = url;
+    });
+  }
+
+  async function validateLocalImage(file) {
+    const objectUrl = URL.createObjectURL(file);
+
+    try {
+      await preloadImageUrl(objectUrl);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  function uploadToSignedUrl(uploadUrl, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open("PUT", uploadUrl);
+      request.setRequestHeader(
+        "Content-Type",
+        file.type || "application/octet-stream",
+      );
+      request.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable) {
+          onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        }
+      });
+      request.addEventListener("load", () => {
+        if (request.status >= 200 && request.status < 300) {
+          onProgress(100);
+          resolve();
+          return;
+        }
+
+        reject(new Error("R2 rechazó la subida."));
+      });
+      request.addEventListener("error", () => {
+        reject(new Error("No se pudo conectar con R2."));
+      });
+      request.addEventListener("abort", () => {
+        reject(new Error("La subida fue cancelada."));
+      });
+      request.send(file);
+    });
+  }
+
+  function formatFileSize(size) {
+    if (!Number.isFinite(size) || size < 0) {
+      return "Tamaño desconocido";
+    }
+
+    if (size < 1024) {
+      return `${size} B`;
+    }
+
+    const units = ["KB", "MB", "GB"];
+    let value = size / 1024;
+    let unitIndex = 0;
+
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+
+    return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+  }
+
   const handlePaste = useEffectEvent(async (event) => {
+    if (isBusy) {
+      return;
+    }
+
     const clipboard = event.clipboardData;
     if (!clipboard) {
       return;
@@ -254,7 +331,7 @@ export default function HomeClient({ initialContent }) {
       const file = imageItem.getAsFile();
 
       if (file) {
-        await uploadImage(file);
+        await uploadFile(file);
       }
 
       return;
@@ -283,7 +360,6 @@ export default function HomeClient({ initialContent }) {
     return () => {
       coarsePointer.removeEventListener("change", updateDeviceMode);
       window.removeEventListener("paste", handlePaste);
-      clearPendingImage();
       clearCachedImageBlob();
     };
   }, []);
@@ -663,7 +739,7 @@ export default function HomeClient({ initialContent }) {
   }
 
   const prefetchImageForClipboard = useEffectEvent(async (forceRefresh = false) => {
-    if (content?.type !== "image" || pendingImageUrlRef.current) {
+    if (content?.type !== "image") {
       clearCachedImageBlob();
       return;
     }
@@ -700,28 +776,11 @@ export default function HomeClient({ initialContent }) {
     };
   }, []);
 
-  async function loadContent() {
-    setIsBusy(true);
-
-    try {
-      const response = await fetch("/api/content", { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error("No se pudo cargar el contenido.");
-      }
-
-      const data = await response.json();
-      setContent(data.content);
-    } catch {
-      setStatus({
-        kind: "error",
-        message: "No se pudo cargar el contenido actual.",
-      });
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
   async function saveText(value, options = {}) {
+    if (isBusy) {
+      return false;
+    }
+
     const { clearMobileInput = false, blurMobileInput = false } = options;
     const text = value.trim();
     if (!text) {
@@ -734,7 +793,6 @@ export default function HomeClient({ initialContent }) {
 
     isSavingTextRef.current = true;
     setIsBusy(true);
-    clearPendingImage();
     clearCachedImageBlob();
 
     try {
@@ -791,41 +849,141 @@ export default function HomeClient({ initialContent }) {
     }
   }
 
-  async function uploadImage(file) {
-    const previewUrl = URL.createObjectURL(file);
+  async function uploadFile(file) {
+    if (isBusy) {
+      return;
+    }
 
+    if (file.size > MAX_FILE_BYTES) {
+      setStatus({
+        kind: "error",
+        message: "El archivo supera el límite de 200 MB.",
+      });
+      return;
+    }
+
+    const isImage = file.type.startsWith("image/");
+    let uploadedKey = null;
     setIsBusy(true);
-    setIsReplacingImage(true);
     setActiveHistoryEntryId(null);
     clearCachedImageBlob();
-    pendingImageUrlRef.current = previewUrl;
-    setPendingImageUrl(previewUrl);
+    setUploadState({
+      phase: isImage ? "preparing" : "uploading",
+      progress: 0,
+      filename: file.name || "archivo",
+    });
     setStatus({ kind: "idle", message: "" });
 
     try {
-      const uploadFile = await prepareUploadFile(file);
-      const formData = new FormData();
-      formData.append("file", uploadFile);
+      if (isImage) {
+        await validateLocalImage(file);
+      }
+
+      const preparedFile = isImage ? await prepareUploadFile(file) : file;
+      const contentType = (
+        preparedFile.type || "application/octet-stream"
+      ).toLowerCase();
+      const uploadPreparationResponse = await fetch("/api/content/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: preparedFile.name || file.name || "archivo",
+          contentType,
+          size: preparedFile.size,
+        }),
+      });
+
+      if (!uploadPreparationResponse.ok) {
+        throw new Error("No se pudo preparar la subida.");
+      }
+
+      const uploadPreparation = await uploadPreparationResponse.json();
+      uploadedKey = uploadPreparation.key;
+      setUploadState((current) => ({
+        ...current,
+        phase: "uploading",
+        progress: 0,
+      }));
+
+      await uploadToSignedUrl(
+        uploadPreparation.uploadUrl,
+        preparedFile,
+        (progress) => {
+          setUploadState((current) => ({
+            ...current,
+            phase: "uploading",
+            progress,
+          }));
+        },
+      );
+
+      setUploadState((current) => ({
+        ...current,
+        phase: "finalizing",
+        progress: 100,
+      }));
+
+      if (isImage) {
+        await preloadImageUrl(uploadPreparation.readUrl);
+      }
 
       const response = await fetch("/api/content", {
         method: "PUT",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: isImage ? "image" : "file",
+          key: uploadedKey,
+          filename: file.name || "archivo",
+          contentType,
+          size: preparedFile.size,
+        }),
       });
 
       if (!response.ok) {
-        throw new Error("No se pudo guardar la imagen.");
+        throw new Error("No se pudo publicar el archivo.");
       }
 
       const data = await response.json();
-      setContent(data.content);
-      clearPendingImage();
-      setStatus({ kind: "success", message: "Imagen cargada." });
+      uploadedKey = null;
+
+      if (isImage) {
+        const nextContent = {
+          ...data.content,
+          value: uploadPreparation.readUrl,
+        };
+        setReadyImageUrl(nextContent.value);
+        setImageLoadError(false);
+        setImageRetryCount(0);
+        setContent(nextContent);
+      } else {
+        setContent(data.content);
+      }
+
+      setStatus({
+        kind: "success",
+        message: isImage ? "Imagen cargada." : "Archivo cargado.",
+      });
     } catch {
-      clearPendingImage();
-      await loadContent();
-      setStatus({ kind: "error", message: "No se pudo guardar la imagen." });
+      if (uploadedKey) {
+        try {
+          await fetch("/api/content/upload-url", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: uploadedKey }),
+          });
+        } catch {
+          // Best effort cleanup; the published content remains untouched.
+        }
+      }
+
+      setStatus({
+        kind: "error",
+        message: isImage
+          ? "No se pudo preparar o guardar la imagen."
+          : "No se pudo guardar el archivo.",
+      });
     } finally {
-      setIsReplacingImage(false);
+      setUploadState(null);
       setIsBusy(false);
     }
   }
@@ -1020,7 +1178,7 @@ export default function HomeClient({ initialContent }) {
       isBusy ||
       !content ||
       content.type !== "image" ||
-      pendingImageUrlRef.current
+      readyImageUrl !== content.value
     ) {
       return;
     }
@@ -1050,7 +1208,7 @@ export default function HomeClient({ initialContent }) {
       return;
     }
 
-    await uploadImage(file);
+    await uploadFile(file);
   }
 
   async function onMobilePaste(event) {
@@ -1138,18 +1296,40 @@ export default function HomeClient({ initialContent }) {
     mergeHistoryEntry,
   ]);
 
-  const displayedContent =
-    pendingImageUrl && isReplacingImage
-      ? { type: "image", value: pendingImageUrl, isPending: true }
-      : activeHistoryEntry
-        ? {
-            type: "text",
-            value: activeHistoryEntry.text,
-            sourceLabel: activeHistoryEntry.label,
-            isHistoryEntry: true,
-            historySource: activeHistoryEntry.source,
-          }
-        : content;
+  const displayedContent = activeHistoryEntry
+    ? {
+        type: "text",
+        value: activeHistoryEntry.text,
+        sourceLabel: activeHistoryEntry.label,
+        isHistoryEntry: true,
+        historySource: activeHistoryEntry.source,
+      }
+    : content;
+
+  const imageSource =
+    displayedContent?.type === "image" && imageRetryCount > 0
+      ? `${displayedContent.value}${displayedContent.value.includes("?") ? "&" : "?"}retry=${imageRetryCount}`
+      : displayedContent?.value;
+  const isDisplayedImageReady =
+    displayedContent?.type === "image" && readyImageUrl === displayedContent.value;
+  const uploadMessage =
+    uploadState?.phase === "preparing"
+      ? "Preparando imagen..."
+      : uploadState?.phase === "finalizing"
+        ? "Finalizando..."
+        : `Subiendo ${uploadState?.progress || 0} %`;
+  const uploadProgressCard = uploadState ? (
+    <div className="upload-progress-card" aria-live="polite">
+      <span className="upload-progress-name">{uploadState.filename}</span>
+      <span className="upload-progress-label">{uploadMessage}</span>
+      <progress
+        className="upload-progress-bar"
+        max="100"
+        value={uploadState.phase === "preparing" ? undefined : uploadState.progress}
+        aria-label={uploadMessage}
+      />
+    </div>
+  ) : null;
 
   const textCardStyle = {
     width: `min(100%, ${textCardWidth}px)`,
@@ -1213,51 +1393,86 @@ export default function HomeClient({ initialContent }) {
         ref={fileInputRef}
         className="hidden-input"
         type="file"
-        accept="image/*"
         onChange={onFileChange}
       />
 
       <section className="stage">
         {!displayedContent ? (
-          <button
-            type="button"
-            className={`empty-state ${isReplacingImage ? "is-loading" : ""}`}
-            onClick={openFilePicker}
-            disabled={isBusy}
-            aria-label="Seleccionar imagen"
-          >
-            <span className="plus-mark">{isReplacingImage ? "" : "+"}</span>
-            <span className="hint-text">
-              {isReplacingImage ? "Subiendo imagen..." : hint}
-            </span>
-          </button>
+          uploadProgressCard || (
+            <button
+              type="button"
+              className="empty-state"
+              onClick={openFilePicker}
+              disabled={isBusy}
+              aria-label="Seleccionar archivo"
+            >
+              <span className="plus-mark">+</span>
+              <span className="hint-text">{hint}</span>
+            </button>
+          )
         ) : (
           displayedContent.type === "image" ? (
-            <div
-              className={`content-card content-image ${
-                displayedContent.isPending ? "is-uploading" : ""
-              }`}
-            >
+            <div className="content-card content-image">
               <button
                 type="button"
                 className="image-copy-button"
-                onClick={copyCurrentContent}
+                onClick={() => {
+                  if (imageLoadError) {
+                    setImageLoadError(false);
+                    setImageRetryCount((current) => current + 1);
+                    return;
+                  }
+
+                  void copyCurrentContent();
+                }}
                 onPointerEnter={() => {
                   void handleImageHoverCopy();
                 }}
-                disabled={isBusy}
-                aria-label="Copiar imagen al portapapeles"
+                disabled={isBusy || (!isDisplayedImageReady && !imageLoadError)}
+                aria-label={
+                  imageLoadError
+                    ? "Reintentar carga de imagen"
+                    : "Copiar imagen al portapapeles"
+                }
               >
                 <img
-                  src={displayedContent.value}
+                  src={imageSource}
                   alt="Contenido actual"
-                  className="image-content"
+                  className={`image-content ${
+                    isDisplayedImageReady ? "is-ready" : "is-waiting"
+                  }`}
+                  onLoad={() => {
+                    setReadyImageUrl(displayedContent.value);
+                    setImageLoadError(false);
+                  }}
+                  onError={() => {
+                    setImageLoadError(true);
+                  }}
                 />
-                {displayedContent.isPending ? (
-                  <span className="image-overlay">Subiendo imagen...</span>
+                {!isDisplayedImageReady ? (
+                  <span className="image-overlay">
+                    {imageLoadError ? "No se pudo cargar. Tocar para reintentar" : "Cargando imagen..."}
+                  </span>
                 ) : null}
               </button>
             </div>
+          ) : displayedContent.type === "file" ? (
+            <a
+              className="content-card file-card"
+              href={`/api/content/download?v=${encodeURIComponent(
+                displayedContent.updatedAt || "actual",
+              )}`}
+              aria-label={`Descargar ${displayedContent.filename}`}
+            >
+              <span className="file-card-icon" aria-hidden="true">↓</span>
+              <span className="file-card-copy">
+                <strong className="file-card-name">{displayedContent.filename}</strong>
+                <span className="file-card-meta">
+                  {formatFileSize(displayedContent.size)} · {displayedContent.contentType}
+                </span>
+              </span>
+              <span className="file-card-action">Descargar</span>
+            </a>
           ) : (
             <article
               ref={textDocumentRef}
@@ -1321,6 +1536,8 @@ export default function HomeClient({ initialContent }) {
           )
         )}
 
+        {displayedContent && uploadProgressCard}
+
         <div className="actions-row">
           <button
             type="button"
@@ -1328,7 +1545,7 @@ export default function HomeClient({ initialContent }) {
             onClick={openFilePicker}
             disabled={isBusy}
           >
-            {displayedContent ? "Reemplazar con imagen" : "Elegir imagen"}
+            {displayedContent ? "Reemplazar archivo" : "Elegir archivo"}
           </button>
         </div>
 
