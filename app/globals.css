@@ -44,6 +44,50 @@ textarea {
   padding: 24px;
 }
 
+.file-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+  background: rgba(39, 28, 15, 0.34);
+  backdrop-filter: blur(7px);
+}
+
+.file-drop-card {
+  width: min(88vw, 520px);
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  padding: 30px;
+  border: 2px dashed rgba(91, 66, 34, 0.54);
+  border-radius: 34px;
+  background: rgba(248, 240, 225, 0.96);
+  color: var(--text);
+  text-align: center;
+  box-shadow: 0 28px 70px rgba(50, 35, 18, 0.24);
+}
+
+.file-drop-icon {
+  color: var(--frame-dark);
+  font-size: 5rem;
+  line-height: 0.8;
+}
+
+.file-drop-card > span:not(.file-drop-icon) {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.file-drop-card small {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .stage {
   width: min(100%, 1280px);
   display: grid;
