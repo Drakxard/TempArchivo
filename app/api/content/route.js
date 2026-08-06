@@ -14,16 +14,6 @@ import {
   uploadR2Object,
 } from "../../../lib/r2";
 
-function getBlobToken() {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-
-  if (!token) {
-    throw new Error("Missing BLOB_READ_WRITE_TOKEN.");
-  }
-
-  return token;
-}
-
 function json(body, init) {
   const headers = new Headers(init?.headers);
   headers.set("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate");
@@ -32,6 +22,14 @@ function json(body, init) {
     ...init,
     headers,
   });
+}
+
+async function writeVerifiedContent(content) {
+  await writeStoredContent(content);
+  const confirmed = await readStoredContent();
+  if (!confirmed || confirmed.updatedAt !== content.updatedAt) {
+    throw new Error("Published state could not be verified.");
+  }
 }
 
 export async function GET() {
@@ -47,7 +45,7 @@ export async function GET() {
 }
 
 export async function PUT(request) {
-  let pendingKey = null;
+  let pendingKeys = [];
   let published = false;
 
   try {
@@ -72,7 +70,7 @@ export async function PUT(request) {
           updatedAt: new Date().toISOString(),
         };
 
-        await writeStoredContent(nextContent);
+        await writeVerifiedContent(nextContent);
         await deleteStoredObjectIfNeeded(previousContent, nextContent);
 
         return json({ content: nextContent });
@@ -82,7 +80,7 @@ export async function PUT(request) {
         (body?.type === "image" || body?.type === "file") &&
         isUploadStorageKey(body?.key)
       ) {
-        pendingKey = body.key;
+        pendingKeys = [body.key];
         const filename = String(body?.filename || "archivo")
           .replace(/[\r\n]/g, "")
           .trim()
@@ -99,34 +97,34 @@ export async function PUT(request) {
           declaredSize < 0 ||
           declaredSize > MAX_FILE_BYTES
         ) {
-          if (previousContent?.value !== pendingKey) {
-            await deleteR2Object(pendingKey).catch(() => {});
+          if (previousContent?.value !== pendingKeys[0]) {
+            await deleteR2Object(pendingKeys[0]).catch(() => {});
           }
-          pendingKey = null;
+          pendingKeys = [];
           return json({ error: "El tamaño del archivo no es válido." }, { status: 400 });
         }
 
         if (body.type === "image" && !declaredContentType.startsWith("image/")) {
-          if (previousContent?.value !== pendingKey) {
-            await deleteR2Object(pendingKey).catch(() => {});
+          if (previousContent?.value !== pendingKeys[0]) {
+            await deleteR2Object(pendingKeys[0]).catch(() => {});
           }
-          pendingKey = null;
+          pendingKeys = [];
           return json(
             { error: "El tipo declarado no corresponde a una imagen." },
             { status: 400 },
           );
         }
 
-        const object = await headR2Object(pendingKey);
+        const object = await headR2Object(pendingKeys[0]);
         if (
           object.contentLength !== declaredSize ||
           object.contentLength > MAX_FILE_BYTES ||
           object.contentType.toLowerCase() !== declaredContentType
         ) {
-          if (previousContent?.value !== pendingKey) {
-            await deleteR2Object(pendingKey).catch(() => {});
+          if (previousContent?.value !== pendingKeys[0]) {
+            await deleteR2Object(pendingKeys[0]).catch(() => {});
           }
-          pendingKey = null;
+          pendingKeys = [];
           return json(
             { error: "El archivo subido no coincide con sus metadatos." },
             { status: 400 },
@@ -135,7 +133,7 @@ export async function PUT(request) {
 
         const nextContent = {
           type: body.type,
-          value: pendingKey,
+          value: pendingKeys[0],
           storage: "r2",
           filename,
           contentType: declaredContentType,
@@ -143,12 +141,38 @@ export async function PUT(request) {
           updatedAt: new Date().toISOString(),
         };
 
-        const resolvedContent = await resolveContentForClient(nextContent);
-        await writeStoredContent(nextContent);
+        await writeVerifiedContent(nextContent);
         published = true;
         await deleteStoredObjectIfNeeded(previousContent, nextContent);
 
-        return json({ content: resolvedContent });
+        return json({ content: await resolveContentForClient(nextContent) });
+      }
+
+      if (body?.type === "images" && Array.isArray(body.items) && body.items.length > 0 && body.items.length <= 10) {
+        pendingKeys = body.items.map((item) => item?.key);
+        if (!pendingKeys.every(isUploadStorageKey) || new Set(pendingKeys).size !== pendingKeys.length) {
+          return json({ error: "El lote de imágenes no es válido." }, { status: 400 });
+        }
+
+        const items = await Promise.all(body.items.map(async (item, index) => {
+          const filename = String(item?.filename || `imagen-${index + 1}`)
+            .replace(/[\r\n]/g, "").trim().slice(0, 255) || `imagen-${index + 1}`;
+          const contentType = typeof item?.contentType === "string" ? item.contentType.trim().toLowerCase() : "";
+          const size = Number(item?.size);
+          if (!contentType.startsWith("image/") || !Number.isInteger(size) || size < 0 || size > MAX_FILE_BYTES) {
+            throw new Error("Invalid image metadata.");
+          }
+          const object = await headR2Object(item.key);
+          if (object.contentLength !== size || object.contentType.toLowerCase() !== contentType) {
+            throw new Error("Uploaded image metadata mismatch.");
+          }
+          return { key: item.key, filename, contentType, size };
+        }));
+        const nextContent = { type: "images", storage: "r2", items, updatedAt: new Date().toISOString() };
+        await writeVerifiedContent(nextContent);
+        published = true;
+        await deleteStoredObjectIfNeeded(previousContent, nextContent);
+        return json({ content: await resolveContentForClient(nextContent) });
       }
 
       return json(
@@ -173,6 +197,7 @@ export async function PUT(request) {
       }
 
       const key = createImageKey(file.type);
+      pendingKeys = [key];
       const nextContent = {
         type: "image",
         value: key,
@@ -181,7 +206,8 @@ export async function PUT(request) {
       };
 
       await uploadR2Object(key, Buffer.from(await file.arrayBuffer()), file.type);
-      await writeStoredContent(nextContent);
+      await writeVerifiedContent(nextContent);
+      published = true;
       await deleteStoredObjectIfNeeded(previousContent, nextContent);
 
       return json({ content: await resolveContentForClient(nextContent) });
@@ -192,12 +218,11 @@ export async function PUT(request) {
       { status: 415 },
     );
   } catch (error) {
-    if (pendingKey && !published) {
+    if (pendingKeys.length && !published) {
       try {
         const currentContent = await readStoredContent();
-        if (currentContent?.value !== pendingKey) {
-          await deleteR2Object(pendingKey);
-        }
+        const activeKeys = new Set(currentContent?.type === "images" ? currentContent.items.map((item) => item.key) : [currentContent?.value]);
+        await Promise.all(pendingKeys.filter((key) => key && !activeKeys.has(key)).map((key) => deleteR2Object(key)));
       } catch {
         // Best effort cleanup; never hide the original upload error.
       }

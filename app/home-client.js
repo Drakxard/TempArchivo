@@ -990,6 +990,66 @@ export default function HomeClient({ initialContent }) {
     }
   }
 
+  async function uploadImageBatch(files) {
+    if (isBusy) return;
+    if (files.length < 2 || files.length > 10 || files.some((file) => !file.type.startsWith("image/") || file.size > MAX_FILE_BYTES)) {
+      setStatus({ kind: "error", message: "Selecciona entre 2 y 10 imágenes de hasta 200 MB cada una." });
+      return;
+    }
+
+    const uploadedKeys = [];
+    setIsBusy(true);
+    setActiveHistoryEntryId(null);
+    clearCachedImageBlob();
+    setUploadState({ phase: "preparing", progress: 0, filename: `${files.length} imágenes` });
+    setStatus({ kind: "idle", message: "" });
+
+    try {
+      const items = [];
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        await validateLocalImage(file);
+        const preparedFile = await prepareUploadFile(file);
+        const contentType = (preparedFile.type || "application/octet-stream").toLowerCase();
+        const preparationResponse = await fetch("/api/content/upload-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name || "imagen", contentType, size: preparedFile.size }),
+        });
+        if (!preparationResponse.ok) throw new Error("No se pudo preparar la subida.");
+        const preparation = await preparationResponse.json();
+        uploadedKeys.push(preparation.key);
+        setUploadState({ phase: "uploading", progress: Math.round((index / files.length) * 100), filename: `${index + 1}/${files.length}: ${file.name || "imagen"}` });
+        await uploadToSignedUrl(preparation.uploadUrl, preparedFile, (progress) => {
+          setUploadState({ phase: "uploading", progress: Math.round(((index + progress / 100) / files.length) * 100), filename: `${index + 1}/${files.length}: ${file.name || "imagen"}` });
+        });
+        items.push({ key: preparation.key, filename: file.name || "imagen", contentType, size: preparedFile.size });
+      }
+
+      setUploadState({ phase: "finalizing", progress: 100, filename: `${files.length} imágenes` });
+      const response = await fetch("/api/content", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "images", items }),
+      });
+      if (!response.ok) throw new Error("No se pudo publicar el lote.");
+      const data = await response.json();
+      uploadedKeys.length = 0;
+      setContent(data.content);
+      setStatus({ kind: "success", message: `${files.length} imágenes cargadas.` });
+    } catch {
+      await Promise.all(uploadedKeys.map((key) => fetch("/api/content/upload-url", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      }).catch(() => {})));
+      setStatus({ kind: "error", message: "No se pudo preparar o guardar el lote de imágenes." });
+    } finally {
+      setUploadState(null);
+      setIsBusy(false);
+    }
+  }
+
   async function copyCurrentContent() {
     if (!content) {
       return;
@@ -1261,14 +1321,33 @@ export default function HomeClient({ initialContent }) {
   }
 
   async function onFileChange(event) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
     event.target.value = "";
 
-    if (!file) {
+    if (!files.length) {
       return;
     }
 
-    await uploadFile(file);
+    if (files.length > 1) {
+      await uploadImageBatch(files);
+      return;
+    }
+
+    await uploadFile(files[0]);
+  }
+
+  function downloadImageBatch() {
+    if (content?.type !== "images") return;
+    content.items.forEach((_, index) => {
+      window.setTimeout(() => {
+        const link = document.createElement("a");
+        link.href = `/api/content/download?index=${index}&v=${encodeURIComponent(content.updatedAt)}`;
+        link.download = "";
+        document.body.append(link);
+        link.click();
+        link.remove();
+      }, index * 350);
+    });
   }
 
   async function onMobilePaste(event) {
@@ -1461,6 +1540,7 @@ export default function HomeClient({ initialContent }) {
         ref={fileInputRef}
         className="hidden-input"
         type="file"
+        multiple
         onChange={onFileChange}
       />
 
@@ -1541,6 +1621,21 @@ export default function HomeClient({ initialContent }) {
               </span>
               <span className="file-card-action">Descargar</span>
             </a>
+          ) : displayedContent.type === "images" ? (
+            <button
+              type="button"
+              className="content-card file-card"
+              onClick={downloadImageBatch}
+              disabled={isBusy}
+              aria-label={`Descargar ${displayedContent.items.length} imágenes`}
+            >
+              <span className="file-card-icon" aria-hidden="true">↓</span>
+              <span className="file-card-copy">
+                <strong className="file-card-name">Descargar {displayedContent.items.length} imágenes</strong>
+                <span className="file-card-meta">Se descargarán una por una</span>
+              </span>
+              <span className="file-card-action">Descargar</span>
+            </button>
           ) : (
             <article
               ref={textDocumentRef}
